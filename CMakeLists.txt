@@ -16,6 +16,7 @@ find_package(nlohmann_json REQUIRED)
 # Source files
 set(SOURCE_FILES
     src/main.cpp
+    src/virtualfs
     src/api_client.cpp
     src/smfs_state.hpp
     src/websocket_client.hpp
