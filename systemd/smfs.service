@@ -1,0 +1,11 @@
+[Unit]
+Description=SMFS Virtual Filesystem Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/smfs --host localhost --port 7095 --apikey YOUR_API_KEY --mount /mnt/smfs
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
