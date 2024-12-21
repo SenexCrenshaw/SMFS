@@ -1,63 +1,50 @@
 #include "logger.hpp"
+#include <fstream>
+#include <iostream>
+#include <mutex>
 
-// Define static members
-std::mutex Logger::logMutex;
-std::ofstream Logger::logFile;
+static std::mutex g_logMutex;
+static std::ofstream g_logFile;
 
-// Initialize log file
 void Logger::InitLogFile(const std::string &filePath)
 {
-    std::lock_guard<std::mutex> lock(logMutex);
-    logFile.open(filePath, std::ios::app);
-    if (!logFile.is_open())
+    std::lock_guard<std::mutex> lock(g_logMutex);
+    if (g_logFile.is_open())
     {
-        std::cerr << "Failed to open log file: " << filePath << std::endl;
+        g_logFile.close();
+    }
+    g_logFile.open(filePath, std::ios::app);
+    if (!g_logFile.good())
+    {
+        std::cerr << "[ERROR] Could not open log file: " << filePath << std::endl;
     }
 }
 
-// Log a message
-void Logger::Log(LogLevel level, const std::string &message)
+void Logger::Log(LogLevel level, const std::string &msg)
 {
-    std::lock_guard<std::mutex> lock(logMutex);
-    std::string levelStr = LevelToString(level);
-
-    std::ostringstream logStream;
-    logStream << CurrentTime() << " [" << levelStr << "] " << message;
-
-    // Print to console
-    std::cout << logStream.str() << std::endl;
-
-    // Write to file if open
-    if (logFile.is_open())
+    std::lock_guard<std::mutex> lock(g_logMutex);
+    if (!g_logFile.is_open())
     {
-        logFile << logStream.str() << std::endl;
+        // fallback to stderr
+        std::cerr << "[LOGGER] " << msg << std::endl;
+        return;
     }
-}
-
-// Convert LogLevel to string
-std::string Logger::LevelToString(LogLevel level)
-{
+    std::cout << "[LOGGER] " << msg << std::endl;
     switch (level)
     {
     case LogLevel::DEBUG:
-        return "DEBUG";
+        g_logFile << "[DEBUG] ";
+        break;
     case LogLevel::INFO:
-        return "INFO";
+        g_logFile << "[INFO ] ";
+        break;
     case LogLevel::WARN:
-        return "WARN";
+        g_logFile << "[WARN ] ";
+        break;
     case LogLevel::ERROR:
-        return "ERROR";
-    default:
-        return "UNKNOWN";
+        g_logFile << "[ERROR] ";
+        break;
     }
-}
-
-// Get current time
-std::string Logger::CurrentTime()
-{
-    auto now = std::chrono::system_clock::now();
-    auto in_time_t = std::chrono::system_clock::to_time_t(now);
-    std::ostringstream ss;
-    ss << std::put_time(std::localtime(&in_time_t), "%Y-%m-%d %H:%M:%S");
-    return ss.str();
+    g_logFile << msg << std::endl;
+    g_logFile.flush();
 }

@@ -1,41 +1,38 @@
 cmake_minimum_required(VERSION 3.10)
-project(SMFS VERSION 1.0 LANGUAGES CXX)
+project(smfs_fuse LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED True)
+set(CMAKE_CXX_FLAGS "-Wall -Wextra -Wpedantic")
 
-# Use vcpkg toolchain
-set(CMAKE_TOOLCHAIN_FILE "/opt/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE STRING "Vcpkg toolchain file")
-set(CMAKE_PREFIX_PATH "/opt/vcpkg/installed/x64-linux")
-
-# Dependencies
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(FUSE REQUIRED fuse3)
-find_package(nlohmann_json REQUIRED)
+pkg_check_modules(FUSE3 REQUIRED fuse3)
+pkg_check_modules(CURL REQUIRED libcurl)
 
-# Source files
 set(SOURCE_FILES
     src/main.cpp
-    src/virtualfs
-    src/api_client.cpp
-    src/smfs_state.hpp
-    src/websocket_client.hpp
-    src/fuse_operations.cpp
     src/logger.cpp
+    src/websocket_client.hpp
+    include/sgfs.hpp
+    include/stream_context.hpp
+    include/api_client.hpp
+    src/api_client.cpp
+    src/smfs_state.hpp    
+    include/fuse_operations.hpp
+    src/fuse_operations.cpp
+    include/ring_buffer.hpp
 )
 
 # Executable
 add_executable(smfs ${SOURCE_FILES})
 
-# uWebSockets includes and library paths
-target_include_directories(smfs PRIVATE /opt/vcpkg/installed/x64-linux/include ${FUSE_INCLUDE_DIRS} ${CMAKE_SOURCE_DIR}/include)
-target_link_directories(smfs PRIVATE /opt/vcpkg/installed/x64-linux/lib)
+target_include_directories(smfs PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${FUSE3_INCLUDE_DIRS}
+    ${CURL_INCLUDE_DIRS}
+)
 
-# Link libraries
-target_link_libraries(smfs PRIVATE
-    ${FUSE_LIBRARIES}
-    curl
+target_link_libraries(smfs
+    ${FUSE3_LIBRARIES}
+    ${CURL_LIBRARIES}
     pthread
-    uSockets
-    z
 )
