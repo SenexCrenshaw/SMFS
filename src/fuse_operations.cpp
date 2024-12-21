@@ -184,7 +184,12 @@ int fs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset
             if (kv.first.find('/', 1) == std::string::npos)
             {
                 std::string name = kv.first.substr(1);
-                filler(buf, name.c_str(), nullptr, 0, (fuse_fill_dir_flags)0);
+                // Filter by file type
+                std::string extension = name.substr(name.find_last_of('.') + 1);
+                if (g_state->enabledFileTypes.find(extension) != g_state->enabledFileTypes.end() || kv.second == nullptr)
+                {
+                    filler(buf, name.c_str(), nullptr, 0, (fuse_fill_dir_flags)0);
+                }
             }
         }
     }
@@ -202,7 +207,14 @@ int fs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset
                 auto slashPos = remainder.find('/');
                 if (slashPos == std::string::npos)
                 {
-                    childNames.insert(remainder);
+                    // Get file extension
+                    std::string extension = remainder.substr(remainder.find_last_of('.') + 1);
+
+                    // Filter by file type
+                    if (g_state->enabledFileTypes.find(extension) != g_state->enabledFileTypes.end())
+                    {
+                        childNames.insert(remainder);
+                    }
                 }
                 else
                 {
@@ -301,6 +313,15 @@ size_t readContentFromUrl(const std::string &url, char *buf, size_t size, size_t
 int fs_read(const char *path, char *buf, size_t size, off_t offset, fuse_file_info *fi)
 {
     // Logger::Log(LogLevel::DEBUG, std::string("fs_read: ") + path);
+    std::string filePath(path);
+    std::string extension = filePath.substr(filePath.find_last_of('.') + 1);
+
+    // Check if the file type is enabled
+    if (g_state->enabledFileTypes.find(extension) == g_state->enabledFileTypes.end())
+    {
+        Logger::Log(LogLevel::WARN, "fs_read: File type not enabled -> " + extension);
+        return -EACCES; // Access denied
+    }
 
     auto vf = reinterpret_cast<VirtualFile *>(fi->fh);
     if (!vf)

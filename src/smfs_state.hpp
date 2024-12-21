@@ -11,6 +11,7 @@
 #include <curl/curl.h>
 #include <deque>
 #include <condition_variable>
+#include <set>
 
 // Forward declare so we can reference below
 struct StreamContext;
@@ -46,6 +47,7 @@ struct VirtualFile
 // SMFS = "Stream Master File System"
 struct SMFS
 {
+    std::set<std::string> enabledFileTypes;
     std::string storageDir;
     // Map of path -> VirtualFile (or nullptr if directory)
     std::map<std::string, std::shared_ptr<VirtualFile>> files;
