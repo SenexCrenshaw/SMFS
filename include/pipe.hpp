@@ -68,7 +68,7 @@ public:
             }
         }
 
-        // Logger::Log(LogLevel::DEBUG, "Pipe::read: Read " + std::to_string(bytesRead) + " bytes. Requested: " + std::to_string(len));
+        Logger::Log(LogLevel::DEBUG, "Pipe::read: Read " + std::to_string(bytesRead) + " bytes. Requested: " + std::to_string(len));
         if (bytesRead > 0)
         {
             // Logger::Log(LogLevel::DEBUG, "Pipe::read: Read " + std::to_string(bytesRead) + " bytes. Buffer filled partially/completely.");
