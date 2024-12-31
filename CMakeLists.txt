@@ -11,15 +11,14 @@ pkg_check_modules(CURL REQUIRED libcurl)
 set(SOURCE_FILES
     src/main.cpp
     src/logger.cpp
-    src/websocket_client.hpp
-    include/sgfs.hpp
-    include/stream_context.hpp
-    include/api_client.hpp
     src/api_client.cpp
-    src/smfs_state.hpp    
+    src/fuse_operations.cpp    
+    include/logger.hpp
+    include/api_client.hpp
+    include/smfs_state.hpp
     include/fuse_operations.hpp
-    src/fuse_operations.cpp
-    include/ring_buffer.hpp
+    include/stream_manager.hpp
+    include/websocket_client.hpp
 )
 
 # Executable

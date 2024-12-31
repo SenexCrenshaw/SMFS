@@ -49,8 +49,7 @@ void APIClient::fetchFileList()
     CURLcode res = curl_easy_perform(curl);
     if (res != CURLE_OK)
     {
-        Logger::Log(LogLevel::ERROR,
-                    "CURL error: " + std::string(curl_easy_strerror(res)));
+        Logger::Log(LogLevel::ERROR, "CURL error: " + std::string(curl_easy_strerror(res)));
         curl_easy_cleanup(curl);
         return;
     }
@@ -63,21 +62,8 @@ void APIClient::fetchFileList()
         auto jsonResponse = json::parse(response);
         groups.clear();
 
-        // Lock the files map
         std::lock_guard<std::mutex> lock(g_state->filesMutex);
         g_state->files.clear();
-
-        // The structure might be:
-        // {
-        //   "2": {
-        //     "name": "Test",
-        //     "url":  "...",
-        //     "smfs": [
-        //       {"name": "Game Show Network", "url": "..."},
-        //       {"name": "Cinemax US",       "url": "..."}
-        //     ]
-        //   }
-        // }
 
         for (auto &entry : jsonResponse.items())
         {
@@ -88,43 +74,23 @@ void APIClient::fetchFileList()
             group.name = groupJson.value("name", "");
             group.url = groupJson.value("url", "");
 
-            // e.g. "/Test"
             std::string groupDir = "/" + group.name;
             g_state->files[groupDir] = nullptr; // directory
             Logger::Log(LogLevel::DEBUG, "Created group directory: " + groupDir);
-            // .xml
-            std::string xmlPath = groupDir + "/" + group.name + ".xml";
-            g_state->files[xmlPath] = std::make_shared<VirtualFile>(VirtualFile(group.url));
-            Logger::Log(LogLevel::DEBUG, "Added file: " + xmlPath);
-            // .m3u
-            std::string m3uPath = groupDir + "/" + group.name + ".m3u";
-            g_state->files[m3uPath] = std::make_shared<VirtualFile>(VirtualFile(group.url));
-            Logger::Log(LogLevel::DEBUG, "Added file: " + m3uPath);
 
-            // If "smfs" is an array
             if (groupJson.contains("smfs") && groupJson["smfs"].is_array())
             {
-
-                for (auto &fileJson : groupJson["smfs"])
+                for (const auto &fileJson : groupJson["smfs"])
                 {
                     SMFile smFile;
                     smFile.name = fileJson.value("name", "");
                     smFile.url = fileJson.value("url", "");
 
                     group.addSMFile(smFile);
-                    // For each channel subdirectory
-                    // e.g. "/Test/HBO"
-                    std::string subDirPath = groupDir + "/" + smFile.name;
-                    g_state->files[subDirPath] = nullptr; // directory
-                    Logger::Log(LogLevel::DEBUG, "Added Directory: " + subDirPath);
-                    // .ts
-                    std::string tsPath = subDirPath + "/" + smFile.name + ".ts";
+
+                    std::string tsPath = groupDir + "/" + smFile.name + ".ts";
                     g_state->files[tsPath] = std::make_shared<VirtualFile>(VirtualFile(smFile.url));
-                    Logger::Log(LogLevel::DEBUG, "Added file: " + tsPath);
-                    // .strm
-                    std::string strmPath = subDirPath + "/" + smFile.name + ".strm";
-                    g_state->files[strmPath] = std::make_shared<VirtualFile>(VirtualFile(smFile.url));
-                    Logger::Log(LogLevel::DEBUG, "Added file: " + strmPath);
+                    Logger::Log(LogLevel::DEBUG, "Added .ts file: " + tsPath);
                 }
             }
 
@@ -135,7 +101,6 @@ void APIClient::fetchFileList()
     }
     catch (const std::exception &ex)
     {
-        Logger::Log(LogLevel::ERROR,
-                    "JSON parse error: " + std::string(ex.what()));
+        Logger::Log(LogLevel::ERROR, "JSON parse error: " + std::string(ex.what()));
     }
 }

@@ -11,20 +11,11 @@
 #include <cstring>
 #include <set>
 
-// Global pointer
+// Global pointers
 SMFS *g_state = nullptr;
 
 int main(int argc, char *argv[])
 {
-    // if (argc < 5)
-    // {
-    //     std::cerr << "Usage: " << argv[0]
-    //               << " --host <host> --port <port> --apikey <apikey> --mount <mount_point>"
-    //               << " [--streamGroupProfileIds <ids>] [--isShort <true|false>] [--debug]"
-    //               << std::endl;
-    //     return 1;
-    // }
-
     bool debugMode = false;
     std::string host = "10.3.10.50";
     std::string port = "7095";
@@ -79,14 +70,6 @@ int main(int argc, char *argv[])
             isShort = (std::string(argv[++i]) == "true");
         else if (std::string(argv[i]) == "--storageDir") // NEW
             storageDir = argv[++i];
-        // else if (std::string(argv[i]) == "--enable-m3u")
-        //     enabledFileTypes.insert("m3u");
-        // else if (std::string(argv[i]) == "--enable-xml")
-        //     enabledFileTypes.insert("xml");
-        // else if (std::string(argv[i]) == "--enable-ts")
-        //     enabledFileTypes.insert("ts");
-        // else if (std::string(argv[i]) == "--enable-strm")
-        //     enabledFileTypes.insert("strm");
         else
         {
             // Handle --enable-<filetype>=true/false
@@ -99,7 +82,6 @@ int main(int argc, char *argv[])
 
     // Initialize Logger
     Logger::InitLogFile("/var/log/smfs/smfs.log");
-    // ^ Ensure this path exists or adjust to your system
     std::cout << "[INFO] SMFS starting..." << std::endl;
 
     // Create global SMFS state
@@ -134,6 +116,7 @@ int main(int argc, char *argv[])
     fs_ops.create = fs_create;
     fs_ops.write = fs_write;
     fs_ops.chmod = fs_chmod;
+    fs_ops.flush = fs_flush;
 
     std::cout << "[INFO] Starting FUSE filesystem on mount point: " << mountPoint << std::endl;
 

@@ -5,7 +5,7 @@
 #include <string>
 #include <sys/stat.h>
 #include <cstring>
-#include "../src/smfs_state.hpp"
+#include "smfs_state.hpp"
 
 #define BUFFER_CAPACITY (1024 * 1024)        // 1 MB buffer
 #define MAX_READ_SIZE 4096                   // Typical read size
@@ -23,3 +23,4 @@ int fs_releasedir(const char *path, fuse_file_info *fi);
 int fs_create(const char *path, mode_t mode, fuse_file_info *fi);
 int fs_write(const char *path, const char *buf, size_t size, off_t offset, fuse_file_info *fi);
 int fs_chmod(const char *path, mode_t mode, fuse_file_info *fi);
+int fs_flush(const char *path, fuse_file_info *fi);

@@ -3,15 +3,14 @@
 #include <map>
 #include <mutex>
 #include <memory>
-#include "stream_context.hpp"
 #include "api_client.hpp"
-#include "ring_buffer.hpp"
 #include <atomic>
 #include <thread>
 #include <curl/curl.h>
 #include <deque>
 #include <condition_variable>
 #include <set>
+#include "stream_manager.hpp"
 
 // Forward declare so we can reference below
 struct StreamContext;
@@ -21,19 +20,18 @@ struct VirtualFile
 {
     std::string url;
 
-    // A StreamContext pointer for indefinite streaming
-    std::unique_ptr<StreamContext> streamContext;
+    // A StreamManager pointer for indefinite streaming
+    std::unique_ptr<StreamManager> streamContext;
+
     bool isUserFile = false;
     std::shared_ptr<std::vector<char>> content;
     mode_t st_mode = 0111; // default
     uid_t st_uid = 0;      // optional
     gid_t st_gid = 0;      // optional
-    // Constructors
+
     VirtualFile() = default;
     explicit VirtualFile(const std::string &u)
-        : url(u)
-    {
-    }
+        : url(u) {}
 
     // No copy
     VirtualFile(const VirtualFile &) = delete;
@@ -47,6 +45,7 @@ struct VirtualFile
 // SMFS = "Stream Master File System"
 struct SMFS
 {
+    std::atomic<bool> isShuttingDown{false};
     std::set<std::string> enabledFileTypes;
     std::string storageDir;
     // Map of path -> VirtualFile (or nullptr if directory)
@@ -69,5 +68,4 @@ struct SMFS
     SMFS &operator=(const SMFS &) = delete;
 };
 
-// We define a global pointer in main.cpp: SMFS *g_state
 extern SMFS *g_state;
