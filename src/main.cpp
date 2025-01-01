@@ -1,22 +1,21 @@
+#include "fuse_manager.hpp"
 #include "smfs_state.hpp"
 #include "websocket_client.hpp"
-#include "fuse_operations.hpp"
 #include "logger.hpp"
 
 #include <thread>
 #include <atomic>
-#include <chrono>
+#include <csignal>
 #include <iostream>
 #include <vector>
-#include <cstring>
 #include <set>
-#include <csignal>
-#include <fuse3/fuse_lowlevel.h>
+#include <cstring>
+#include <chrono>
 
 // Global pointers
 SMFS *g_state = nullptr;
 std::atomic<bool> exitRequested{false};
-struct fuse_session *g_fuseSession = nullptr;
+FuseManager *fuseManager = nullptr;
 
 // Signal handler to gracefully exit
 void handleSignal(int signal)
@@ -24,16 +23,15 @@ void handleSignal(int signal)
     if (signal == SIGINT)
     {
         Logger::Log(LogLevel::INFO, "SIGINT received. Exiting...");
-        if (g_fuseSession != nullptr)
+        if (fuseManager)
         {
-            Logger::Log(LogLevel::DEBUG, "Calling fuse_session_exit...");
-            fuse_session_exit(g_fuseSession);
+            fuseManager->Stop();
         }
         exitRequested = true;
+        Logger::Log(LogLevel::INFO, "Signal handler completed. Waiting for shutdown...");
     }
 }
 
-// Main function
 int main(int argc, char *argv[])
 {
     // Register signal handler
@@ -41,6 +39,7 @@ int main(int argc, char *argv[])
 
     // Initialize application parameters
     LogLevel logLevel = LogLevel::INFO; // Default log level
+    bool debugMode = false;
     std::string host = "10.3.10.50";
     std::string port = "7095";
     std::string apiKey = "f4bed758a1aa45a38c801ed6893d70fb";
@@ -80,19 +79,22 @@ int main(int argc, char *argv[])
         if (std::string(argv[i]) == "--help")
         {
             std::cout << "Usage: ./smfs [options]\n"
+                      << "--debug                         Enable debug mode (equivalent to --log-level DEBUG)\n"
                       << "--log-level <level>             Set log level (TRACE, DEBUG, INFO, WARN, ERROR, FATAL)\n"
                       << "--enable-<filetype>=true/false  Enable or disable specific file types (e.g., ts, strm, m3u, xml)\n"
                       << "--mount <mountpoint>            Set the FUSE mount point\n"
                       << "--storageDir <path>             Specify the storage directory\n";
             exit(0);
         }
+        else if (std::string(argv[i]) == "--debug")
+        {
+            debugMode = true;
+            logLevel = LogLevel::DEBUG;
+        }
         else if (std::string(argv[i]) == "--log-level" && i + 1 < argc)
         {
             std::string level = argv[++i];
-
-            // Convert the input level to lowercase
             std::transform(level.begin(), level.end(), level.begin(), ::tolower);
-
             if (level == "trace")
                 logLevel = LogLevel::TRACE;
             else if (level == "debug")
@@ -110,7 +112,6 @@ int main(int argc, char *argv[])
                 std::cerr << "Invalid log level: " << level << std::endl;
                 return 1;
             }
-            std::cout << "Configured log level: " << level << std::endl;
         }
         else if (std::string(argv[i]) == "--host")
             host = argv[++i];
@@ -138,15 +139,21 @@ int main(int argc, char *argv[])
     // Initialize Logger
     Logger::InitLogFile("/var/log/smfs/smfs.log");
     Logger::SetLogLevel(logLevel);
+    Logger::SetDebug(debugMode);
     Logger::Log(LogLevel::INFO, "SMFS starting...");
+
+    // Initialize FuseManager
+    FuseManager manager(mountPoint);
+    fuseManager = &manager;
+
+    if (!manager.Initialize())
+    {
+        Logger::Log(LogLevel::ERROR, "Failed to initialize FUSE.");
+        return 1;
+    }
 
     // Create global SMFS state
     g_state = new SMFS(host, port, apiKey, streamGroupProfileIds, isShort);
-    // Initialize root inode mapping
-    inodeToPath[FUSE_ROOT_ID] = "";
-    pathToInode["/"] = FUSE_ROOT_ID;
-    Logger::Log(LogLevel::DEBUG, "Initialized root inode mapping.");
-
     g_state->storageDir = storageDir;
     g_state->enabledFileTypes = std::move(enabledFileTypes);
 
@@ -165,80 +172,26 @@ int main(int argc, char *argv[])
         Logger::Log(LogLevel::INFO, "Starting WebSocket client thread...");
         wsClient.Start(); });
 
-    // FUSE low-level operations
-    struct fuse_lowlevel_ops ll_ops = {};
-    ll_ops.lookup = fs_lookup;
-    ll_ops.getattr = fs_getattr;
-    ll_ops.readdir = fs_readdir;
-    ll_ops.open = fs_open;
-    ll_ops.read = fs_read;
-    ll_ops.write = fs_write;
-    ll_ops.release = fs_release;
-    ll_ops.opendir = fs_opendir;
-    ll_ops.releasedir = fs_releasedir;
+    // Run the FUSE session
+    manager.Run();
 
-    // Setup FUSE arguments
-    std::vector<std::string> argsList;
-    argsList.push_back(argv[0]);
-    argsList.push_back("-o");
-    argsList.push_back("allow_other");
-    std::vector<char *> fuseArgs;
-    for (auto &arg : argsList)
+    // Wait for shutdown
+    while (!exitRequested)
     {
-        fuseArgs.push_back(const_cast<char *>(arg.c_str()));
-    }
-    fuseArgs.push_back(nullptr);
-    struct fuse_args args = FUSE_ARGS_INIT(static_cast<int>(fuseArgs.size()) - 1, fuseArgs.data());
-    for (const auto &arg : argsList)
-    {
-        Logger::Log(LogLevel::DEBUG, "FUSE arg: " + arg);
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
 
-    // Initialize FUSE session
-    g_fuseSession = fuse_session_new(&args, &ll_ops, sizeof(ll_ops), nullptr);
-    if (!g_fuseSession)
+    // Logger::Log(LogLevel::DEBUG, "FUSE thread state: joinable=" + std::to_string(fuseThread_.joinable()));
+    // Logger::Log(LogLevel::DEBUG, "Session state: session_=" + std::string(session_ ? "valid" : "null"));
+
+    Logger::Log(LogLevel::INFO, "Stopping WebSocket client...");
+    wsClient.Stop();
+    if (wsThread.joinable())
     {
-        Logger::Log(LogLevel::ERROR, "Failed to initialize FUSE session.");
-        return 1;
+        wsThread.join();
     }
 
-    if (fuse_session_mount(g_fuseSession, mountPoint.c_str()) != 0)
-    {
-        Logger::Log(LogLevel::ERROR, "Failed to mount FUSE filesystem at " + mountPoint);
-        fuse_session_destroy(g_fuseSession);
-        return 1;
-    }
-
-    Logger::Log(LogLevel::INFO, "Starting FUSE multithreaded event loop.");
-    struct fuse_loop_config config = {};
-    config.clone_fd = 1;
-    config.max_idle_threads = 10;
-    int result = fuse_session_loop_mt(g_fuseSession, &config);
-    if (result != 0)
-    {
-        Logger::Log(LogLevel::ERROR, "FUSE multithreaded loop exited with error: " + std::to_string(result));
-    }
-
-    Logger::Log(LogLevel::INFO, "Exiting FUSE session.");
-    fuse_session_unmount(g_fuseSession);
-    fuse_session_destroy(g_fuseSession);
-
-    try
-    {
-        Logger::Log(LogLevel::INFO, "Stopping WebSocket client...");
-        wsClient.Stop();
-        if (wsThread.joinable())
-        {
-            Logger::Log(LogLevel::DEBUG, "Joining WebSocket client thread...");
-            wsThread.join();
-        }
-    }
-    catch (const std::exception &ex)
-    {
-        Logger::Log(LogLevel::ERROR, "Exception during WebSocket thread shutdown: " + std::string(ex.what()));
-    }
-
-    delete g_state;
     Logger::Log(LogLevel::INFO, "SMFS exited cleanly.");
+    delete g_state;
     return 0;
 }

@@ -64,11 +64,40 @@ inline void WebSocketClient::Start()
 
 void WebSocketClient::Stop()
 {
-    if (!shouldRun.exchange(false)) // Only proceed if not already stopped
+    Logger::Log(LogLevel::DEBUG, "WebSocketClient::Stop() called.");
+    if (!shouldRun.exchange(false))
+    {
+        Logger::Log(LogLevel::WARN, "WebSocket client is already stopped.");
         return;
+    }
 
-    Logger::Log(LogLevel::INFO, "Stopping WebSocket client...");
-    // Perform additional cleanup if needed
+    auto start = std::chrono::steady_clock::now();
+
+    // Wait for the thread to exit
+    while (wsThread.joinable())
+    {
+        if (std::chrono::steady_clock::now() - start > std::chrono::seconds(5))
+        {
+            Logger::Log(LogLevel::WARN, "WebSocket thread did not exit in time. Forcing shutdown...");
+            pthread_cancel(wsThread.native_handle());
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+
+    if (wsThread.joinable())
+    {
+        try
+        {
+            wsThread.join();
+        }
+        catch (const std::system_error &e)
+        {
+            Logger::Log(LogLevel::ERROR, "Error joining WebSocket thread: " + std::string(e.what()));
+        }
+    }
+
+    Logger::Log(LogLevel::INFO, "WebSocket client stopped.");
 }
 
 void WebSocketClient::ConnectAndListen()

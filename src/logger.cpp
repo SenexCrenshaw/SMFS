@@ -8,6 +8,7 @@
 std::ofstream Logger::g_logFile;
 std::mutex Logger::g_logMutex;
 LogLevel Logger::currentLogLevel = LogLevel::INFO; // Default to INFO
+bool Logger::setDebug = false;
 
 std::string ToString(LogLevel level)
 {
@@ -64,6 +65,10 @@ void Logger::Log(LogLevel level, const std::string &msg)
     {
         return;
     }
+    if (setDebug)
+    {
+        std::cerr << "[" << ToString(level) << "] " << msg << std::endl;
+    }
 
     std::lock_guard<std::mutex> lock(g_logMutex);
 
@@ -75,11 +80,5 @@ void Logger::Log(LogLevel level, const std::string &msg)
     if (g_logFile.is_open())
     {
         g_logFile << logJson.dump() << std::endl;
-    }
-
-    // Print to stderr for TRACE or DEBUG levels, or based on preference
-    if (level <= LogLevel::DEBUG)
-    {
-        std::cerr << "[" << ToString(level) << "] " << msg << std::endl;
     }
 }

@@ -25,8 +25,14 @@ public:
         currentLogLevel = level;
     }
 
+    static void SetDebug(bool debug)
+    {
+        setDebug = debug;
+    }
+
 private:
     static std::ofstream g_logFile;
     static std::mutex g_logMutex;
-    static LogLevel currentLogLevel; // Current log level
+    static LogLevel currentLogLevel;
+    static bool setDebug;
 };
