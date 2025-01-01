@@ -1,3 +1,4 @@
+// fuse_operations.cpp
 #include "fuse_operations.hpp"
 #include "logger.hpp"
 #include <algorithm>
@@ -10,375 +11,387 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include "stream_manager.hpp"
-#include "utils.hpp"
+#include <sstream>
+#include <iomanip>
 
-int fs_getattr(const char *path, struct stat *stbuf, fuse_file_info *fi)
+// Map for path-to-inode mapping
+std::unordered_map<std::string, fuse_ino_t> pathToInode;
+std::unordered_map<fuse_ino_t, std::string> inodeToPath;
+std::atomic<fuse_ino_t> nextInode{2}; // Start at 2, as 1 is reserved for the root inode
+
+// Helper: Generate unique inodes
+fuse_ino_t getInode(const std::string &path)
 {
-    Logger::Log(LogLevel::DEBUG, "fs_getattr: Path: " + std::string(path));
-    memset(stbuf, 0, sizeof(struct stat));
+    Logger::Log(LogLevel::DEBUG, "getInode: Looking up inode for path: " + path);
 
-    if (strcmp(path, "/") == 0) // Root directory
+    if (pathToInode.find(path) == pathToInode.end())
     {
-        stbuf->st_mode = S_IFDIR | 0755;
-        stbuf->st_nlink = 2;
-        return 0;
-    }
-
-    std::lock_guard<std::mutex> lock(g_state->filesMutex);
-    auto it = g_state->files.find(path);
-    if (it != g_state->files.end())
-    {
-        if (it->second == nullptr) // Directory
-        {
-            stbuf->st_mode = S_IFDIR | 0755;
-            stbuf->st_nlink = 2;
-        }
-        else // File
-        {
-            stbuf->st_mode = S_IFREG | 0444;
-            stbuf->st_nlink = 1;
-
-            // Set st_size to INT64_MAX for streaming files
-            stbuf->st_size = INT64_MAX;
-        }
-        return 0;
-    }
-
-    return -ENOENT;
-}
-
-int fs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, fuse_file_info *fi, fuse_readdir_flags flags)
-{
-    Logger::Log(LogLevel::DEBUG, std::string("fs_readdir: ") + path);
-
-    filler(buf, ".", nullptr, 0, (fuse_fill_dir_flags)0);
-    filler(buf, "..", nullptr, 0, (fuse_fill_dir_flags)0);
-
-    std::string current(path ? path : "/");
-    if (current.empty())
-        current = "/";
-
-    std::lock_guard<std::mutex> lock(g_state->filesMutex);
-    if (current == "/")
-    {
-        for (auto &kv : g_state->files)
-        {
-            if (kv.first == "/")
-                continue;
-            if (kv.first.find('/', 1) == std::string::npos)
-            {
-                std::string name = kv.first.substr(1);
-                // Filter by file type
-                std::string extension = name.substr(name.find_last_of('.') + 1);
-                if (g_state->enabledFileTypes.find(extension) != g_state->enabledFileTypes.end() || kv.second == nullptr)
-                {
-                    filler(buf, name.c_str(), nullptr, 0, (fuse_fill_dir_flags)0);
-                }
-            }
-        }
+        Logger::Log(LogLevel::DEBUG, "getInode: Inode not found, creating new inode for path: " + path);
+        pathToInode[path] = nextInode++;
+        inodeToPath[pathToInode[path]] = path;
+        Logger::Log(LogLevel::DEBUG, "getInode: Created inode " + std::to_string(pathToInode[path]) + " for path: " + path);
     }
     else
     {
-        if (current.back() != '/')
-            current.push_back('/');
-
-        std::set<std::string> childNames;
-        for (auto &kv : g_state->files)
-        {
-            if (kv.first.rfind(current, 0) == 0 && kv.first != path)
-            {
-                std::string remainder = kv.first.substr(current.size());
-                auto slashPos = remainder.find('/');
-                if (slashPos == std::string::npos)
-                {
-                    // Get file extension
-                    std::string extension = remainder.substr(remainder.find_last_of('.') + 1);
-
-                    // Filter by file type
-                    if (g_state->enabledFileTypes.find(extension) != g_state->enabledFileTypes.end())
-                    {
-                        childNames.insert(remainder);
-                    }
-                }
-                else
-                {
-                    childNames.insert(remainder.substr(0, slashPos));
-                }
-            }
-        }
-        for (auto &nm : childNames)
-        {
-            filler(buf, nm.c_str(), nullptr, 0, (fuse_fill_dir_flags)0);
-        }
+        Logger::Log(LogLevel::DEBUG, "getInode: Found existing inode " + std::to_string(pathToInode[path]) + " for path: " + path);
     }
-    return 0;
+
+    return pathToInode[path];
 }
 
-int fs_readdir2(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, fuse_file_info *fi, fuse_readdir_flags flags)
+// Lookup callback
+void fs_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 {
-    Logger::Log(LogLevel::DEBUG, "fs_readdir: Path: " + std::string(path));
+    std::string parentPath = inodeToPath[parent];
+    std::string path = parentPath + "/" + name;
 
-    // Add current and parent directories
-    filler(buf, ".", NULL, 0, static_cast<fuse_fill_dir_flags>(0));  // Current directory
-    filler(buf, "..", NULL, 0, static_cast<fuse_fill_dir_flags>(0)); // Parent directory
-
-    std::lock_guard<std::mutex> lock(g_state->filesMutex);
-
-    std::string prefix = std::string(path) + (path[strlen(path) - 1] == '/' ? "" : "/");
-
-    for (const auto &entry : g_state->files)
+    // Normalize path (e.g., remove redundant slashes)
+    while (path.find("//") != std::string::npos)
     {
-        // Check if the entry is a direct child of the current directory
-        if (entry.first.find(prefix) == 0)
-        {
-            std::string relativePath = entry.first.substr(prefix.size());
-            if (relativePath.find("/") == std::string::npos) // Direct child only
-            {
-                if (entry.second == nullptr) // Directory
-                {
-                    struct stat stbuf = {};
-                    stbuf.st_mode = S_IFDIR | 0755; // Directory permissions
-                    stbuf.st_nlink = 2;             // Default link count
-                    filler(buf, relativePath.c_str(), &stbuf, 0, static_cast<fuse_fill_dir_flags>(0));
-                }
-                else // File
-                {
-
-                    struct stat stbuf = {};
-                    stbuf.st_mode = S_IFREG | 0444; // File permissions
-                    stbuf.st_nlink = 1;             // Default link count
-                    filler(buf, relativePath.c_str(), &stbuf, 0, static_cast<fuse_fill_dir_flags>(0));
-                }
-
-                Logger::Log(LogLevel::DEBUG, "fs_readdir: Added entry for path: " + relativePath);
-            }
-        }
+        path = path.replace(path.find("//"), 2, "/");
     }
 
-    return 0;
-}
+    Logger::Log(LogLevel::DEBUG, "fs_lookup: Resolving path: " + path);
 
-int fs_flush(const char *path, fuse_file_info *fi)
-{
-    Logger::Log(LogLevel::DEBUG, "fs_flush: Path: " + std::string(path));
-    return 0; // No action required
-}
-
-int fs_read(const char *path, char *buf, size_t size, off_t offset, fuse_file_info *fi)
-{
-    Logger::Log(LogLevel::DEBUG, "fs_read: Attempting to read " + std::to_string(size) +
-                                     " bytes from path: " + std::string(path) +
-                                     ", Offset: " + std::to_string(offset));
-
-    // Lock the file state
-    std::lock_guard<std::mutex> lock(g_state->filesMutex);
-    auto it = g_state->files.find(path);
-
-    if (it != g_state->files.end() && it->second != nullptr)
+    struct fuse_entry_param e = {};
     {
-        auto vf = it->second.get();
-        StreamManager *streamManager = vf->streamContext.get();
-        if (!streamManager)
+        std::lock_guard<std::mutex> lock(g_state->filesMutex);
+        auto it = g_state->files.find(path);
+        if (it != g_state->files.end())
         {
-            Logger::Log(LogLevel::ERROR, "fs_read: StreamManager not found for path: " + std::string(path));
-            return -ENOENT;
+            e.ino = getInode(path);
+            e.attr.st_ino = e.ino;
+            e.attr.st_mode = it->second ? S_IFREG | 0444 : S_IFDIR | 0755;
+            e.attr.st_nlink = it->second ? 1 : 2;
+            e.attr.st_size = it->second ? INT64_MAX : 0;
+            Logger::Log(LogLevel::DEBUG, "fs_lookup: Resolved inode " + std::to_string(e.ino) + " for path: " + path);
+            fuse_reply_entry(req, &e);
+            return;
         }
-
-        if (ends_with(path, ".strm"))
-        {
-            const auto &url = vf->url;
-            if (static_cast<size_t>(offset) >= url.size())
-                return 0; // EOF
-            size_t toRead = std::min(size, url.size() - static_cast<size_t>(offset));
-            memcpy(buf, url.data() + offset, toRead);
-            return static_cast<int>(toRead);
-        }
-        else if (ends_with(path, ".xml"))
-        {
-            std::string contentUrl = vf->url + ".xml";
-            Logger::Log(LogLevel::DEBUG, "fs_read: Fetching XML content from: " + contentUrl);
-            size_t bytesRead = streamManager->readContent(contentUrl, buf, size, offset);
-            return static_cast<int>(bytesRead);
-        }
-        else if (ends_with(path, ".m3u"))
-        {
-            std::string contentUrl = vf->url + ".m3u";
-            Logger::Log(LogLevel::DEBUG, "fs_read: Fetching M3U content from: " + contentUrl);
-            size_t bytesRead = streamManager->readContent(contentUrl, buf, size, offset);
-            return static_cast<int>(bytesRead);
-        }
-        else if (ends_with(path, ".ts"))
-        {
-            // Ensure the stream context exists
-            if (vf->streamContext == nullptr)
-            {
-                vf->streamContext = std::make_unique<StreamManager>(vf->url, 50 * 1024 * 1024, g_state->isShuttingDown);
-                vf->streamContext->startStreaming();
-            }
-
-            size_t bytesRead = 0;
-            std::atomic<bool> &isStoppedAtomic = streamManager->getStopRequestedAtomic();
-
-            while (bytesRead < size)
-            {
-                size_t chunkRead = streamManager->getPipe().read(buf + bytesRead, size - bytesRead, isStoppedAtomic);
-
-                if (chunkRead == 0)
-                {
-                    if (isStoppedAtomic.load())
-                    {
-                        Logger::Log(LogLevel::DEBUG, "fs_read: Returning EOF. Reason: stopRequested_ is true.");
-                        return 0;
-                    }
-
-                    if (g_state->isShuttingDown.load())
-                    {
-                        Logger::Log(LogLevel::DEBUG, "fs_read: Returning EOF. Reason: g_state->isShuttingDown is true.");
-                        return 0;
-                    }
-
-                    Logger::Log(LogLevel::DEBUG, "fs_read: No data available. Retrying.");
-                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-                }
-                else
-                {
-                    bytesRead += chunkRead;
-                }
-            }
-
-            Logger::Log(LogLevel::DEBUG, "fs_read: Returning " + std::to_string(bytesRead) + " bytes.");
-            return bytesRead;
-        }
-
-        Logger::Log(LogLevel::ERROR, "fs_read: Unsupported file type for path: " + std::string(path));
-        return -EINVAL; // Unsupported file type
     }
 
-    Logger::Log(LogLevel::ERROR, "fs_read: Path not found: " + std::string(path));
-    return -ENOENT;
+    Logger::Log(LogLevel::ERROR, "fs_lookup: Path not found: " + path);
+    fuse_reply_err(req, ENOENT);
 }
 
-int fs_write(const char *path, const char *buf, size_t size, off_t offset, fuse_file_info *fi)
+// Getattr callback
+void fs_getattr(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
 {
+    Logger::Log(LogLevel::DEBUG, "fs_getattr: Inode: " + std::to_string(ino));
+
+    struct stat st = {};
+    if (ino == FUSE_ROOT_ID)
+    {
+        st.st_ino = FUSE_ROOT_ID;
+        st.st_mode = S_IFDIR | 0755;
+        st.st_nlink = 2;
+        Logger::Log(LogLevel::DEBUG, "fs_getattr: Returning attributes for root directory.");
+        fuse_reply_attr(req, &st, 1.0);
+        return;
+    }
+
+    std::string path = inodeToPath[ino];
+    {
+        std::lock_guard<std::mutex> lock(g_state->filesMutex);
+        auto it = g_state->files.find(path);
+        if (it != g_state->files.end())
+        {
+            st.st_ino = ino;
+            st.st_mode = it->second ? S_IFREG | 0444 : S_IFDIR | 0755;
+            st.st_nlink = it->second ? 1 : 2;
+            st.st_size = it->second ? INT64_MAX : 0;
+            Logger::Log(LogLevel::DEBUG, "fs_getattr: Returning attributes for path: " + path);
+            fuse_reply_attr(req, &st, 1.0);
+            return;
+        }
+    }
+
+    Logger::Log(LogLevel::ERROR, "fs_getattr: Inode not found: " + std::to_string(ino));
+    fuse_reply_err(req, ENOENT);
+}
+
+void logRawBuffer(const char *buf, size_t size)
+{
+    std::ostringstream oss;
+    for (size_t i = 0; i < size; ++i)
+    {
+        oss << std::hex << std::setfill('0') << std::setw(2) << (unsigned int)(unsigned char)buf[i] << " ";
+        if ((i + 1) % 16 == 0)
+            oss << "\n";
+    }
+    Logger::Log(LogLevel::DEBUG, "Buffer (raw):\n" + oss.str());
+}
+
+// Readdir callback
+void fs_readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, struct fuse_file_info *fi)
+{
+    Logger::Log(LogLevel::DEBUG, "fs_readdir: Inode: " + std::to_string(ino));
+    Logger::Log(LogLevel::DEBUG, "fs_readdir: Offset: " + std::to_string(off));
+
+    if (off > 0)
+    {
+        Logger::Log(LogLevel::DEBUG, "fs_readdir: Offset > 0. No more entries to return.");
+        fuse_reply_buf(req, nullptr, 0); // Signal EOF
+        return;
+    }
+
+    if (inodeToPath.find(ino) == inodeToPath.end())
+    {
+        Logger::Log(LogLevel::ERROR, "fs_readdir: Inode not found: " + std::to_string(ino));
+        fuse_reply_err(req, ENOENT);
+        return;
+    }
+
+    std::string parentPath = inodeToPath[ino];
+    if (parentPath.empty())
+    {
+        parentPath = "/";
+        Logger::Log(LogLevel::DEBUG, "fs_readdir: Parent Path was empty. Assuming root: /");
+    }
+    Logger::Log(LogLevel::DEBUG, "fs_readdir: Resolved Parent Path: " + parentPath);
+
+    char *buf = (char *)calloc(1, size); // Ensure buffer is zero-initialized
+    size_t bufSize = 0;
+
+    auto addDirEntry = [&](const char *name, fuse_ino_t inode, mode_t mode)
+    {
+        if (name == nullptr || strlen(name) == 0)
+        {
+            Logger::Log(LogLevel::ERROR, "fs_readdir: Invalid entry name.");
+            return false;
+        }
+
+        Logger::Log(LogLevel::DEBUG, "fs_readdir: Attempting to add entry: " + std::string(name));
+        struct stat st = {};
+        st.st_ino = inode;
+        st.st_mode = mode;
+
+        size_t entrySize = fuse_add_direntry(req, buf + bufSize, size - bufSize, name, &st, bufSize + 1);
+        if (entrySize == 0 || bufSize + entrySize > size)
+        {
+            Logger::Log(LogLevel::ERROR, "fs_readdir: Failed to add entry: " + std::string(name));
+            return false;
+        }
+
+        bufSize += entrySize;
+        Logger::Log(LogLevel::DEBUG, "fs_readdir: Successfully added entry: " + std::string(name) + " at offset: " + std::to_string(bufSize));
+        return true;
+    };
+
+    addDirEntry(".", ino, S_IFDIR);
+    addDirEntry("..", FUSE_ROOT_ID, S_IFDIR);
+
+    {
+        std::lock_guard<std::mutex> lock(g_state->filesMutex);
+        for (const auto &kv : g_state->files)
+        {
+            if (kv.first.find(parentPath) == 0 && kv.first != parentPath)
+            {
+                std::string relativePath = kv.first.substr(parentPath.size());
+                if (!relativePath.empty() && relativePath[0] == '/')
+                {
+                    relativePath = relativePath.substr(1);
+                }
+
+                if (relativePath.find('/') == std::string::npos)
+                {
+                    Logger::Log(LogLevel::DEBUG, "fs_readdir: Adding direct child: " + relativePath);
+                    if (!addDirEntry(relativePath.c_str(), getInode(kv.first), kv.second ? S_IFREG : S_IFDIR))
+                    {
+                        Logger::Log(LogLevel::ERROR, "fs_readdir: Failed to add entry: " + relativePath);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    logRawBuffer(buf, bufSize); // Log buffer contents in raw format
+    Logger::Log(LogLevel::DEBUG, "fs_readdir: Finalizing readdir operation with buffer size: " + std::to_string(bufSize));
+    int result = fuse_reply_buf(req, buf, bufSize);
+    if (result != 0)
+    {
+        Logger::Log(LogLevel::ERROR, "fs_readdir: fuse_reply_buf failed with error: " + std::to_string(result));
+    }
+    free(buf);
+}
+
+// Open callback
+void fs_open(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
+{
+    std::string path = inodeToPath[ino];
+    Logger::Log(LogLevel::DEBUG, "fs_open: Inode: " + std::to_string(ino) + ", Path: " + path);
+
+    {
+        std::lock_guard<std::mutex> lock(g_state->filesMutex);
+        auto it = g_state->files.find(path);
+
+        if (it != g_state->files.end())
+        {
+            // Only create StreamManager for .ts files if not already created
+            if (path.ends_with(".ts") && !it->second->streamContext)
+            {
+                Logger::Log(LogLevel::DEBUG, "fs_open: Creating StreamManager for .ts file: " + path);
+                try
+                {
+                    it->second->streamContext = std::make_unique<StreamManager>(it->second->url, 4 * 1024 * 1024, g_state->isShuttingDown);
+                    it->second->streamContext->startStreaming();
+                    Logger::Log(LogLevel::DEBUG, "fs_open: StreamManager successfully created for: " + path);
+                }
+                catch (const std::exception &e)
+                {
+                    Logger::Log(LogLevel::ERROR, "fs_open: Failed to create StreamManager for path: " + path + ". Error: " + e.what());
+                    it->second->streamContext.reset(); // Ensure no dangling pointer
+                    fuse_reply_err(req, ENOMEM);
+                    return;
+                }
+            }
+
+            // Pass the VirtualFile pointer to file handle
+            fi->fh = reinterpret_cast<uint64_t>(it->second.get());
+            fuse_reply_open(req, fi);
+            return;
+        }
+    }
+
+    Logger::Log(LogLevel::ERROR, "fs_open: File not found: " + path);
+    fuse_reply_err(req, ENOENT);
+}
+
+// Write callback
+void fs_write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t size, off_t off, struct fuse_file_info *fi)
+{
+    std::string path = inodeToPath[ino];
+    Logger::Log(LogLevel::DEBUG, "fs_write: Writing " + std::to_string(size) + " bytes to " + path);
+
     std::string fullPath = g_state->storageDir + path;
     int fd = open(fullPath.c_str(), O_WRONLY | O_CREAT, 0644);
     if (fd == -1)
     {
-        return -errno;
+        fuse_reply_err(req, errno);
+        return;
     }
 
-    ssize_t res = pwrite(fd, buf, size, offset);
+    ssize_t res = pwrite(fd, buf, size, off);
     close(fd);
 
     if (res == -1)
     {
-        return -errno;
+        fuse_reply_err(req, errno);
     }
-    return res;
+    else
+    {
+        fuse_reply_write(req, res);
+    }
 }
 
-int fs_create(const char *path, mode_t mode, fuse_file_info *fi)
+// Release callback
+void fs_release(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
 {
     std::lock_guard<std::mutex> lock(g_state->filesMutex);
-    g_state->files[path] = std::make_shared<VirtualFile>();
-    return 0;
-}
-
-int fs_opendir(const char *path, fuse_file_info *fi)
-{
-    Logger::Log(LogLevel::DEBUG, "fs_opendir: Path: " + std::string(path ? path : "/"));
-
-    std::string currentPath = path ? path : "/";
-    if (currentPath.empty())
-        currentPath = "/";
-
-    std::lock_guard<std::mutex> lock(g_state->filesMutex);
-    const auto &files = g_state->files;
-
-    // Root directory case
-    if (currentPath == "/")
-    {
-        Logger::Log(LogLevel::DEBUG, "fs_opendir: Root directory opened.");
-        return 0; // Root directory always exists
-    }
-
-    // Ensure the directory path ends with '/'
-    if (currentPath.back() != '/')
-        currentPath.push_back('/');
-
-    // Check if the directory exists
-    bool directoryExists = false;
-    for (const auto &kv : files)
-    {
-        if (kv.first.rfind(currentPath, 0) == 0) // Matches the directory
-        {
-            directoryExists = true;
-            break;
-        }
-    }
-
-    if (!directoryExists)
-    {
-        Logger::Log(LogLevel::ERROR, "fs_opendir: Directory not found: " + currentPath);
-        return -ENOENT;
-    }
-
-    Logger::Log(LogLevel::DEBUG, "fs_opendir: Directory opened successfully: " + currentPath);
-    return 0;
-}
-
-int fs_chmod(const char *path, mode_t mode, fuse_file_info *fi)
-{
-    std::lock_guard<std::mutex> lock(g_state->filesMutex);
-    auto it = g_state->files.find(path);
-    if (it != g_state->files.end() && it->second != nullptr)
-    {
-        it->second->st_mode = mode;
-        return 0;
-    }
-
-    return -ENOENT;
-}
-
-int fs_open(const char *path, fuse_file_info *fi)
-{
-    std::lock_guard<std::mutex> lock(g_state->filesMutex);
-    auto it = g_state->files.find(path);
-    if (it != g_state->files.end() && it->second != nullptr)
-    {
-        if (it->second->streamContext == nullptr || it->second->streamContext->isStopped())
-        {
-            it->second->streamContext = std::make_unique<StreamManager>(it->second->url, 50 * 1024 * 1024, g_state->isShuttingDown);
-            it->second->streamContext->startStreaming();
-        }
-
-        it->second->streamContext->incrementReaderCount();
-        Logger::Log(LogLevel::DEBUG, "fs_open: Incrementing reader count for path: " + std::string(path));
-        return 0;
-    }
-
-    return -ENOENT;
-}
-
-int fs_releasedir(const char *path, fuse_file_info *fi)
-{
-    Logger::Log(LogLevel::DEBUG, "fs_releasedir: Releasing directory at path: " + std::string(path));
-    return 0;
-}
-
-int fs_release(const char *path, fuse_file_info *fi)
-{
-    Logger::Log(LogLevel::DEBUG, "fs_release: Releasing file at path: " + std::string(path) +
-                                     ", File handle: " + std::to_string(fi->fh));
-
-    std::lock_guard<std::mutex> lock(g_state->filesMutex);
+    std::string path = inodeToPath[ino];
+    Logger::Log(LogLevel::DEBUG, "fs_release: Inode: " + std::to_string(ino) + ", Path: " + path);
     auto it = g_state->files.find(path);
     if (it != g_state->files.end() && it->second != nullptr && it->second->streamContext != nullptr)
     {
+        if (it->second->streamContext && !it->second->streamContext->isStopped())
+        {
+            Logger::Log(LogLevel::DEBUG, "fs_release: Decrementing reader count for path: " + std::string(path));
+            it->second->streamContext->decrementReaderCount();
+        }
         Logger::Log(LogLevel::DEBUG, "fs_release: Decrementing reader count for path: " + std::string(path));
-        it->second->streamContext->decrementReaderCount(); // Decrement the reader count
     }
 
-    return 0; // Indicate successful release
+    Logger::Log(LogLevel::DEBUG, "fs_release: Inode: " + std::to_string(ino));
+    fuse_reply_err(req, 0);
+}
+
+// Opendir callback
+void fs_opendir(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
+{
+    Logger::Log(LogLevel::DEBUG, "fs_opendir: Inode: " + std::to_string(ino));
+    fuse_reply_open(req, fi);
+}
+
+// Releasedir callback
+void fs_releasedir(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
+{
+    Logger::Log(LogLevel::DEBUG, "fs_releasedir: Inode: " + std::to_string(ino));
+    fuse_reply_err(req, 0);
+}
+
+void fs_read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, struct fuse_file_info *fi)
+{
+    std::string path = inodeToPath[ino];
+    Logger::Log(LogLevel::DEBUG, "fs_read: Inode: " + std::to_string(ino) + ", Path: " + path);
+
+    {
+        std::lock_guard<std::mutex> lock(g_state->filesMutex);
+        auto it = g_state->files.find(path);
+        if (it != g_state->files.end() && it->second)
+        {
+            auto vf = it->second.get();
+            StreamManager *streamManager = vf->streamContext.get();
+
+            // Handle .strm files
+            if (path.ends_with(".strm"))
+            {
+                const auto &url = vf->url;
+                if (static_cast<size_t>(off) >= url.size())
+                {
+                    fuse_reply_buf(req, nullptr, 0); // EOF
+                    return;
+                }
+                size_t toRead = std::min(size, url.size() - static_cast<size_t>(off));
+                fuse_reply_buf(req, url.data() + off, toRead);
+                return;
+            }
+            // Handle .xml files
+            else if (path.ends_with(".xml"))
+            {
+                std::string contentUrl = vf->url + ".xml";
+                Logger::Log(LogLevel::DEBUG, "fs_read: Fetching XML content from: " + contentUrl);
+                char *buf = new char[size];
+                size_t bytesRead = streamManager->readContent(contentUrl, buf, size, off);
+                fuse_reply_buf(req, buf, bytesRead);
+                delete[] buf;
+                return;
+            }
+            // Handle .m3u files
+            else if (path.ends_with(".m3u"))
+            {
+                std::string contentUrl = vf->url + ".m3u";
+                Logger::Log(LogLevel::DEBUG, "fs_read: Fetching M3U content from: " + contentUrl);
+                char *buf = new char[size];
+                size_t bytesRead = streamManager->readContent(contentUrl, buf, size, off);
+                fuse_reply_buf(req, buf, bytesRead);
+                delete[] buf;
+                return;
+            }
+            // Handle .ts files
+            else if (path.ends_with(".ts"))
+            {
+                if (!streamManager)
+                {
+                    Logger::Log(LogLevel::ERROR, "fs_read: StreamManager not found for path: " + path);
+                    fuse_reply_err(req, ENOENT);
+                    return;
+                }
+
+                char *buf = new char[size];
+                size_t bytesRead = streamManager->getPipe().read(buf, size, g_state->isShuttingDown);
+                Logger::Log(LogLevel::DEBUG, "fs_read: Read " + std::to_string(bytesRead) + " bytes.");
+                fuse_reply_buf(req, buf, bytesRead);
+                delete[] buf;
+                return;
+            }
+
+            Logger::Log(LogLevel::ERROR, "fs_read: Unsupported file type for path: " + path);
+            fuse_reply_err(req, EINVAL); // Unsupported file type
+            return;
+        }
+    }
+
+    Logger::Log(LogLevel::ERROR, "fs_read: File not found for path: " + path);
+    fuse_reply_err(req, ENOENT);
 }

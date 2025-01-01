@@ -20,4 +20,5 @@ public:
 private:
     std::string baseUrl;
     std::map<int, SGFS> groups;
+    void processResponse(const std::string &response);
 };

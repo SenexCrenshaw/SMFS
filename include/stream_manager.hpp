@@ -54,6 +54,12 @@ public:
         return fetchUrlContent(toFetchUrl, buf, size, offset);
     }
 
+    ~StreamManager()
+    {
+        Logger::Log(LogLevel::INFO, "StreamManager: Destructor called for URL: " + url_);
+        stopStreaming();
+    }
+
 private:
     static size_t WriteCallback(void *contents, size_t size, size_t nmemb, void *userp)
     {
@@ -77,6 +83,7 @@ private:
 
         curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L); // Follow redirects
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &retrievedData);
 
         res = curl_easy_perform(curl);
@@ -105,14 +112,20 @@ private:
 
         if (manager->stopRequested_)
         {
-            Logger::Log(LogLevel::DEBUG, "StreamManager::writeCallback: Stop requested, exiting write.");
-            return 0; // Inform CURL to abort
+            Logger::Log(LogLevel::INFO, "StreamManager::writeCallback: Stop requested. Exiting write.");
+            return 0; // Inform CURL to stop
         }
 
         if (!manager->pipe_.write(ptr, total, manager->stopRequested_))
         {
-            Logger::Log(LogLevel::DEBUG, "StreamManager::writeCallback: Failed to write, exiting.");
-            return 0; // Exit if unable to write
+            if (manager->stopRequested_)
+            {
+                Logger::Log(LogLevel::INFO, "StreamManager::writeCallback: Write aborted due to stop request.");
+                return 0; // Stop without logging an error
+            }
+
+            Logger::Log(LogLevel::ERROR, "StreamManager::writeCallback: Failed to write to pipe.");
+            return 0; // Inform CURL of failure
         }
 
         return total;
@@ -143,7 +156,12 @@ private:
             Logger::Log(LogLevel::DEBUG, "StreamManager::streamingThreadFunc: Attempting stream for URL: " + url_);
             CURLcode res = curl_easy_perform(curl);
 
-            if (res != CURLE_OK)
+            if (res == CURLE_ABORTED_BY_CALLBACK && stopRequested_)
+            {
+                Logger::Log(LogLevel::INFO, "StreamManager::streamingThreadFunc: Stream stopped by request for URL: " + url_);
+                break;
+            }
+            else if (res != CURLE_OK)
             {
                 Logger::Log(LogLevel::ERROR, "StreamManager::streamingThreadFunc: CURL error: " + std::string(curl_easy_strerror(res)));
                 std::this_thread::sleep_for(std::chrono::seconds(5)); // Retry after delay
@@ -156,10 +174,6 @@ private:
         }
 
         curl_easy_cleanup(curl);
-        Logger::Log(LogLevel::DEBUG, "StreamManager::streamingThreadFunc: Loop exit condition met for URL: " + url_ +
-                                         ", stopRequested_=" + std::to_string(stopRequested_) +
-                                         ", isShuttingDown_=" + std::to_string(isShuttingDown_.load()));
-
         Logger::Log(LogLevel::INFO, "StreamManager::streamingThreadFunc: Exiting for URL: " + url_);
     }
 

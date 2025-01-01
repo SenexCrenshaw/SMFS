@@ -61,96 +61,84 @@ inline void WebSocketClient::Start()
         ConnectAndListen(); });
 }
 
-// Stop the WebSocket client
-inline void WebSocketClient::Stop()
+void WebSocketClient::Stop()
 {
-    shouldRun = false;
-    std::cout << "[INFO] Stopping WebSocket client..." << std::endl;
+    if (!shouldRun.exchange(false)) // Only proceed if not already stopped
+        return;
+
+    Logger::Log(LogLevel::INFO, "Stopping WebSocket client...");
+    // Perform additional cleanup if needed
 }
 
-// Connect to the WebSocket server and listen for messages
-inline void WebSocketClient::ConnectAndListen()
+void WebSocketClient::ConnectAndListen()
 {
+    int retryDelay = 1; // Start with a 1-second delay
+
     while (shouldRun)
     {
         try
         {
             net::io_context ioc;
-
-            // Resolve the host and port
             tcp::resolver resolver{ioc};
             auto const results = resolver.resolve(host_, port_);
-
-            // Create and connect the WebSocket stream
             websocket::stream<beast::tcp_stream> ws{ioc};
             ws.next_layer().connect(*results.begin());
-            std::cout << "[INFO] Connection to server established." << std::endl;
+            ws.handshake(host_, "/ws");
 
-            // Perform the WebSocket handshake
-            std::string target = "/ws";
-            ws.handshake(host_, target);
-            std::cout << "[INFO] WebSocket handshake successful." << std::endl;
+            Logger::Log(LogLevel::INFO, "WebSocket connection established.");
 
             beast::flat_buffer buffer;
-
-            // Main read loop
             while (shouldRun)
             {
                 try
                 {
-                    ws.read(buffer); // Blocking call to read data
-                    std::string message = beast::buffers_to_string(buffer.data());
-                    HandleMessage(message);
+                    ws.read(buffer);
+                    HandleMessage(beast::buffers_to_string(buffer.data()));
                     buffer.consume(buffer.size());
+                    retryDelay = 1; // Reset delay on successful read
                 }
-                catch (const beast::system_error &se)
+                catch (const beast::system_error &e)
                 {
-                    // Handle WebSocket-specific errors
-                    if (se.code() == websocket::error::closed)
+                    if (e.code() == websocket::error::closed)
                     {
-                        std::cout << "[WARN] WebSocket closed by server." << std::endl;
+                        Logger::Log(LogLevel::WARN, "WebSocket closed by server.");
                         break;
                     }
-                    else
-                    {
-                        std::cerr << "[ERROR] WebSocket error: " << se.what() << std::endl;
-                        break;
-                    }
+                    throw; // Rethrow other exceptions
                 }
             }
-
-            std::cout << "[INFO] Reconnecting in 5 seconds..." << std::endl;
-            std::this_thread::sleep_for(std::chrono::seconds(5));
         }
         catch (const std::exception &e)
         {
-            std::cerr << "[ERROR] Connection failed: " << e.what() << std::endl;
-            std::cout << "[INFO] Retrying connection in 5 seconds..." << std::endl;
-            std::this_thread::sleep_for(std::chrono::seconds(5));
+            Logger::Log(LogLevel::ERROR, "WebSocket connection failed: " + std::string(e.what()));
         }
-    }
 
-    std::cout << "[INFO] WebSocket client stopping." << std::endl;
+        if (!shouldRun)
+            break;
+
+        Logger::Log(LogLevel::INFO, "Retrying connection in " + std::to_string(retryDelay) + " seconds.");
+        std::this_thread::sleep_for(std::chrono::seconds(retryDelay));
+        retryDelay = std::min(retryDelay * 2, 32); // Exponential backoff up to 32 seconds
+    }
 }
 
 // Handle incoming messages
-inline void WebSocketClient::HandleMessage(const std::string &message)
+void WebSocketClient::HandleMessage(const std::string &message)
 {
-    std::cout << "[DEBUG] Received message: " << message << std::endl;
+    Logger::Log(LogLevel::DEBUG, "Received message: " + message);
 
     if (message == "reload")
     {
-        std::cout << "[INFO] Reload command received." << std::endl;
-        try
-        {
-            // Simulate API call to fetch a file list
-            std::cout << "[INFO] Fetching file list..." << std::endl;
-            // g_state->apiClient.fetchFileList(); // Replace with your real API logic
-            std::cout << "[INFO] File list reloaded successfully." << std::endl;
-        }
-        catch (const std::exception &e)
-        {
-            std::cerr << "[ERROR] Error fetching file list: " << e.what() << std::endl;
-        }
+        Logger::Log(LogLevel::INFO, "Reload command received. Fetching file list...");
+        g_state->apiClient.fetchFileList();
+        Logger::Log(LogLevel::INFO, "File list reloaded.");
     }
+    else if (message.starts_with("delete:"))
+    {
+        std::string filePath = message.substr(7);
+        Logger::Log(LogLevel::INFO, "Delete command received for file: " + filePath);
+        std::lock_guard<std::mutex> lock(g_state->filesMutex);
+        g_state->files.erase(filePath);
+    }
+    // Add additional command handling here
 }

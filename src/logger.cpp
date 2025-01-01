@@ -32,6 +32,9 @@ void Logger::Log(LogLevel level, const std::string &msg)
     std::cout << "[LOGGER] " << msg << std::endl;
     switch (level)
     {
+    case LogLevel::TRACE:
+        g_logFile << "[TRACE] ";
+        break;
     case LogLevel::DEBUG:
         g_logFile << "[DEBUG] ";
         break;
@@ -43,6 +46,9 @@ void Logger::Log(LogLevel level, const std::string &msg)
         break;
     case LogLevel::ERROR:
         g_logFile << "[ERROR] ";
+        break;
+    case LogLevel::FATAL:
+        g_logFile << "[FATAL] ";
         break;
     }
     g_logFile << msg << std::endl;

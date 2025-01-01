@@ -3,10 +3,12 @@
 
 enum class LogLevel
 {
+    TRACE,
     DEBUG,
     INFO,
     WARN,
-    ERROR
+    ERROR,
+    FATAL
 };
 
 class Logger

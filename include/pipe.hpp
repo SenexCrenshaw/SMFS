@@ -15,27 +15,23 @@ public:
     bool write(const char *data, size_t len, std::atomic<bool> &stop)
     {
         std::unique_lock<std::mutex> lock(mutex_);
-        for (size_t i = 0; i < len; ++i)
+        size_t written = 0;
+
+        while (written < len && !stop.load())
         {
-            if (stop.load())
-            {
-                return false; // Stop requested
-            }
-
             while (queue_.size() >= capacity_ && !stop.load())
-            {
                 condNotFull_.wait(lock);
-            }
 
             if (stop.load())
-            {
                 return false;
-            }
 
-            queue_.push(data[i]);
+            size_t batchSize = std::min(capacity_ - queue_.size(), len - written);
+            for (size_t i = 0; i < batchSize; ++i)
+                queue_.push(data[written + i]);
+
+            written += batchSize;
             condNotEmpty_.notify_one();
         }
-        // Logger::Log(LogLevel::DEBUG, "Pipe::write: Attempting to write " + std::to_string(len) + " bytes. Current size: " + std::to_string(queue_.size()));
 
         return true;
     }

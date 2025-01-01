@@ -33,30 +33,48 @@ const std::map<int, SGFS> &APIClient::getGroups() const
 void APIClient::fetchFileList()
 {
     Logger::Log(LogLevel::INFO, "Fetching file list from API: " + baseUrl);
+    int retries = 0;
+    const int maxRetries = 5;
+    int retryDelay = 1;
 
-    CURL *curl = curl_easy_init();
-    std::string response;
-    if (!curl)
+    while (retries < maxRetries)
     {
-        Logger::Log(LogLevel::ERROR, "Failed to initialize CURL.");
-        return;
+        try
+        {
+            CURL *curl = curl_easy_init();
+            if (!curl)
+                throw std::runtime_error("CURL initialization failed");
+
+            std::string response;
+            curl_easy_setopt(curl, CURLOPT_URL, baseUrl.c_str());
+            curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_response);
+            curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+
+            CURLcode res = curl_easy_perform(curl);
+            curl_easy_cleanup(curl);
+
+            if (res != CURLE_OK)
+                throw std::runtime_error(curl_easy_strerror(res));
+
+            processResponse(response);
+            Logger::Log(LogLevel::INFO, "File list fetched successfully.");
+            return; // Exit on success
+        }
+        catch (const std::exception &e)
+        {
+            retries++;
+            Logger::Log(LogLevel::WARN, "Failed to fetch file list: " + std::string(e.what()) +
+                                            ". Retrying in " + std::to_string(retryDelay) + " seconds.");
+            std::this_thread::sleep_for(std::chrono::seconds(retryDelay));
+            retryDelay = std::min(retryDelay * 2, 32); // Exponential backoff
+        }
     }
 
-    curl_easy_setopt(curl, CURLOPT_URL, baseUrl.c_str());
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_response);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+    Logger::Log(LogLevel::ERROR, "Max retries reached. Could not fetch file list.");
+}
 
-    CURLcode res = curl_easy_perform(curl);
-    if (res != CURLE_OK)
-    {
-        Logger::Log(LogLevel::ERROR, "CURL error: " + std::string(curl_easy_strerror(res)));
-        curl_easy_cleanup(curl);
-        return;
-    }
-
-    Logger::Log(LogLevel::INFO, "File list fetched successfully.");
-    curl_easy_cleanup(curl);
-
+void APIClient::processResponse(const std::string &response)
+{
     try
     {
         auto jsonResponse = json::parse(response);
@@ -75,19 +93,19 @@ void APIClient::fetchFileList()
             group.url = groupJson.value("url", "");
 
             std::string groupDir = "/" + group.name;
-            g_state->files[groupDir] = nullptr; // directory
+            g_state->files[groupDir] = nullptr; // Directory
             Logger::Log(LogLevel::DEBUG, "Created group directory: " + groupDir);
-            std::string subDirPath = groupDir + "/" + group.name;
 
-            // .xml
+            // Add .xml and .m3u files
             std::string xmlPath = groupDir + "/" + group.name + ".xml";
-            g_state->files[xmlPath] = std::make_shared<VirtualFile>(VirtualFile(group.url));
-            Logger::Log(LogLevel::DEBUG, "Added file: " + xmlPath);
-            // .m3u
-            std::string m3uPath = groupDir + "/" + group.name + ".m3u";
-            g_state->files[m3uPath] = std::make_shared<VirtualFile>(VirtualFile(group.url));
-            Logger::Log(LogLevel::DEBUG, "Added file: " + m3uPath);
+            g_state->files[xmlPath] = std::make_shared<VirtualFile>(group.url + ".xml");
+            Logger::Log(LogLevel::DEBUG, "Added .xml file: " + xmlPath);
 
+            std::string m3uPath = groupDir + "/" + group.name + ".m3u";
+            g_state->files[m3uPath] = std::make_shared<VirtualFile>(group.url + ".m3u");
+            Logger::Log(LogLevel::DEBUG, "Added .m3u file: " + m3uPath);
+
+            // Process sub-files in the group
             if (groupJson.contains("smfs") && groupJson["smfs"].is_array())
             {
                 for (const auto &fileJson : groupJson["smfs"])
@@ -98,14 +116,33 @@ void APIClient::fetchFileList()
 
                     group.addSMFile(smFile);
 
-                    std::string tsPath = subDirPath + "/" + smFile.name + ".ts";
-                    g_state->files[tsPath] = std::make_shared<VirtualFile>(VirtualFile(smFile.url));
-                    Logger::Log(LogLevel::DEBUG, "Added .ts file: " + tsPath);
+                    std::string subDirPath = groupDir + "/" + smFile.name;
+                    if (g_state->files.find(subDirPath) == g_state->files.end())
+                    {
+                        g_state->files[subDirPath] = nullptr; // Create subgroup directory
+                        Logger::Log(LogLevel::DEBUG, "Added subgroup directory: " + subDirPath);
+                    }
+                    else
+                    {
+                        Logger::Log(LogLevel::WARN, "Subgroup directory already exists: " + subDirPath);
+                    }
 
-                    // .strm
+                    // Add .strm file
                     std::string strmPath = subDirPath + "/" + smFile.name + ".strm";
-                    g_state->files[strmPath] = std::make_shared<VirtualFile>(VirtualFile(smFile.url));
-                    Logger::Log(LogLevel::DEBUG, "Added file: " + strmPath);
+                    g_state->files[strmPath] = std::make_shared<VirtualFile>(smFile.url);
+                    Logger::Log(LogLevel::DEBUG, "Added .strm file: " + strmPath);
+
+                    // Add .ts file
+                    std::string tsPath = subDirPath + "/" + smFile.name + ".ts";
+                    if (g_state->files.find(tsPath) == g_state->files.end())
+                    {
+                        g_state->files[tsPath] = std::make_shared<VirtualFile>(smFile.url);
+                        Logger::Log(LogLevel::DEBUG, "Added .ts file: " + tsPath);
+                    }
+                    else
+                    {
+                        Logger::Log(LogLevel::ERROR, "Conflict: .ts file already exists for path: " + tsPath);
+                    }
                 }
             }
 

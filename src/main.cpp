@@ -1,3 +1,4 @@
+// main.cpp
 #include "smfs_state.hpp"
 #include "websocket_client.hpp"
 #include "fuse_operations.hpp"
@@ -10,29 +11,53 @@
 #include <vector>
 #include <cstring>
 #include <set>
+#include <csignal>
+#include <fuse3/fuse_lowlevel.h>
 
 // Global pointers
 SMFS *g_state = nullptr;
+std::atomic<bool> exitRequested{false};
+struct fuse_session *g_fuseSession = nullptr;
 
+// Signal handler to gracefully exit
+void handleSignal(int signal)
+{
+    if (signal == SIGINT)
+    {
+        Logger::Log(LogLevel::INFO, "SIGINT received. Exiting...");
+        if (g_fuseSession != nullptr)
+        {
+            Logger::Log(LogLevel::DEBUG, "Calling fuse_session_exit...");
+            fuse_session_exit(g_fuseSession);
+        }
+        exitRequested = true;
+    }
+}
+
+// Main function
 int main(int argc, char *argv[])
 {
+    // Register signal handler
+    std::signal(SIGINT, handleSignal);
+
+    // Initialize application parameters
     bool debugMode = false;
     std::string host = "10.3.10.50";
     std::string port = "7095";
     std::string apiKey = "f4bed758a1aa45a38c801ed6893d70fb";
     std::string mountPoint = "/mnt/fuse";
-    std::string storageDir = "/tmp/smfs_storage"; // default
-    std::string streamGroupProfileIds = "3";      // Default value
-    bool isShort = true;                          // Default value
+    std::string storageDir = "/tmp/smfs_storage";
+    std::string streamGroupProfileIds = "3";
+    bool isShort = true;
     std::set<std::string> enabledFileTypes{"xml", "m3u", "strm"};
 
-    // Helper lambda to process `--enable-<filetype>=true/false` or `--enable-<filetype>`
+    // Parse arguments
     auto parseEnableFlag = [&](const std::string &arg, const std::string &fileType)
     {
         std::string prefix = "--enable-" + fileType;
         if (arg.find(prefix) == 0)
         {
-            if (arg == prefix) // e.g., --enable-m3u (defaults to true)
+            if (arg == prefix)
             {
                 enabledFileTypes.insert(fileType);
             }
@@ -51,10 +76,17 @@ int main(int argc, char *argv[])
         }
     };
 
-    // Parse arguments
     for (int i = 1; i < argc; i++)
     {
-        if (std::string(argv[i]) == "--host")
+        if (std::string(argv[i]) == "--help")
+        {
+            std::cout << "Usage: ./smfs [options]\n"
+                      << "--enable-<filetype>=true/false    Enable or disable specific file types (e.g., ts, strm, m3u, xml)\n"
+                      << "--mount <mountpoint>             Set the FUSE mount point\n"
+                      << "--storageDir <path>              Specify the storage directory\n";
+            exit(0);
+        }
+        else if (std::string(argv[i]) == "--host")
             host = argv[++i];
         else if (std::string(argv[i]) == "--port")
             port = argv[++i];
@@ -68,11 +100,10 @@ int main(int argc, char *argv[])
             streamGroupProfileIds = argv[++i];
         else if (std::string(argv[i]) == "--isShort")
             isShort = (std::string(argv[++i]) == "true");
-        else if (std::string(argv[i]) == "--storageDir") // NEW
+        else if (std::string(argv[i]) == "--storageDir")
             storageDir = argv[++i];
         else
         {
-            // Handle --enable-<filetype>=true/false
             parseEnableFlag(argv[i], "m3u");
             parseEnableFlag(argv[i], "xml");
             parseEnableFlag(argv[i], "strm");
@@ -82,74 +113,115 @@ int main(int argc, char *argv[])
 
     // Initialize Logger
     Logger::InitLogFile("/var/log/smfs/smfs.log");
-    std::cout << "[INFO] SMFS starting..." << std::endl;
+    Logger::Log(LogLevel::INFO, "SMFS starting...");
 
     // Create global SMFS state
     g_state = new SMFS(host, port, apiKey, streamGroupProfileIds, isShort);
-    g_state->storageDir = storageDir;
+    // Initialize root inode mapping
+    inodeToPath[FUSE_ROOT_ID] = "";
+    pathToInode["/"] = FUSE_ROOT_ID;
+    Logger::Log(LogLevel::DEBUG, "Initialized root inode mapping.");
 
-    // Pass enabled file types to the global state
+    g_state->storageDir = storageDir;
     g_state->enabledFileTypes = std::move(enabledFileTypes);
 
-    // Fetch initial file list from your REST API
+    for (const auto &fileType : enabledFileTypes)
+    {
+        Logger::Log(LogLevel::INFO, "Enabled file type: " + fileType);
+    }
+
+    // Fetch initial file list
     g_state->apiClient.fetchFileList();
 
-    // Start WebSocket client in another thread
+    // Start WebSocket client
     WebSocketClient wsClient(host, port, apiKey);
     std::thread wsThread([&wsClient]()
                          {
-        std::cout << "[INFO] Starting WebSocket client thread..." << std::endl;
+        Logger::Log(LogLevel::INFO, "Starting WebSocket client thread...");
         wsClient.Start(); });
 
-    // Delay to ensure WebSocket starts before fuse_main
-    std::this_thread::sleep_for(std::chrono::seconds(2));
+    // FUSE low-level operations
+    struct fuse_lowlevel_ops ll_ops = {};
+    ll_ops.lookup = fs_lookup;         // Low-level equivalent of getattr
+    ll_ops.getattr = fs_getattr;       // Return file attributes
+    ll_ops.readdir = fs_readdir;       // Directory listing
+    ll_ops.open = fs_open;             // Open a file
+    ll_ops.read = fs_read;             // Read file contents
+    ll_ops.write = fs_write;           // Write to a file
+    ll_ops.release = fs_release;       // Close a file
+    ll_ops.opendir = fs_opendir;       // Open a directory
+    ll_ops.releasedir = fs_releasedir; // Close a directory
 
-    // Setup FUSE operations
-    struct fuse_operations fs_ops = {};
-    fs_ops.getattr = fs_getattr;
-    fs_ops.readdir = fs_readdir;
-    fs_ops.open = fs_open;
-    fs_ops.read = fs_read;
-    fs_ops.release = fs_release;
-    fs_ops.opendir = fs_opendir;
-    fs_ops.releasedir = fs_releasedir;
-    fs_ops.create = fs_create;
-    fs_ops.write = fs_write;
-    fs_ops.chmod = fs_chmod;
-    fs_ops.flush = fs_flush;
-
-    std::cout << "[INFO] Starting FUSE filesystem on mount point: " << mountPoint << std::endl;
-
+    // Setup FUSE arguments
     // Build fuse arguments
+    std::vector<std::string> argsList;
+    argsList.push_back(argv[0]); // Program name
+    argsList.push_back("-o");
+    argsList.push_back("allow_other"); // Allow other users to access the FUSE filesystem
+    // Convert arguments to char*
     std::vector<char *> fuseArgs;
-    fuseArgs.push_back(argv[0]);
-    if (debugMode)
+    for (auto &arg : argsList)
     {
-        fuseArgs.push_back(const_cast<char *>("-d")); // debug mode
+        fuseArgs.push_back(const_cast<char *>(arg.c_str()));
     }
-    fuseArgs.push_back(const_cast<char *>("-f")); // foreground mode
+    fuseArgs.push_back(nullptr); // Null-terminate the argument list
 
-    fuseArgs.push_back(const_cast<char *>("-o"));
-    fuseArgs.push_back(const_cast<char *>("allow_other"));
-
-    fuseArgs.push_back(const_cast<char *>(mountPoint.c_str()));
-    fuseArgs.push_back(nullptr);
-
-    int fuseStatus = fuse_main(
-        static_cast<int>(fuseArgs.size()) - 1,
-        fuseArgs.data(),
-        &fs_ops,
-        nullptr);
-
-    std::cout << "[DEBUG] fuse_main exited with status: " << fuseStatus << std::endl;
-
-    // Stop WebSocket client gracefully
-    wsClient.Stop();
-    if (wsThread.joinable())
+    // Initialize fuse_args
+    struct fuse_args args = FUSE_ARGS_INIT(static_cast<int>(fuseArgs.size()) - 1, fuseArgs.data());
+    for (const auto &arg : argsList)
     {
-        wsThread.join();
+        Logger::Log(LogLevel::DEBUG, "FUSE arg: " + arg);
     }
 
-    std::cout << "[INFO] SMFS exiting." << std::endl;
-    return fuseStatus;
+    // Initialize FUSE session
+    g_fuseSession = fuse_session_new(&args, &ll_ops, sizeof(ll_ops), nullptr);
+    if (!g_fuseSession)
+    {
+        Logger::Log(LogLevel::ERROR, "Failed to initialize FUSE session.");
+        return 1;
+    }
+
+    // Mount the FUSE filesystem
+    if (fuse_session_mount(g_fuseSession, mountPoint.c_str()) != 0)
+    {
+        Logger::Log(LogLevel::ERROR, "Failed to mount FUSE filesystem at " + mountPoint);
+        fuse_session_destroy(g_fuseSession);
+        return 1;
+    }
+
+    // Run FUSE multithreaded event loop
+    Logger::Log(LogLevel::INFO, "Starting FUSE multithreaded event loop.");
+    struct fuse_loop_config config = {};
+    config.clone_fd = 1;          // Enable file descriptor cloning for multithreading
+    config.max_idle_threads = 10; // Limit the number of idle threads
+    int result = fuse_session_loop_mt(g_fuseSession, &config);
+    if (result != 0)
+    {
+        Logger::Log(LogLevel::ERROR, "FUSE multithreaded loop exited with error: " + std::to_string(result));
+    }
+    // Cleanup
+    Logger::Log(LogLevel::INFO, "Exiting FUSE session.");
+    fuse_session_unmount(g_fuseSession);
+    fuse_session_destroy(g_fuseSession);
+
+    // Stop WebSocket client
+    try
+    {
+        Logger::Log(LogLevel::INFO, "Stopping WebSocket client...");
+        wsClient.Stop();
+
+        if (wsThread.joinable())
+        {
+            Logger::Log(LogLevel::DEBUG, "Joining WebSocket client thread...");
+            wsThread.join();
+        }
+    }
+    catch (const std::exception &ex)
+    {
+        Logger::Log(LogLevel::ERROR, "Exception during WebSocket thread shutdown: " + std::string(ex.what()));
+    }
+
+    delete g_state;
+    Logger::Log(LogLevel::INFO, "SMFS exited cleanly.");
+    return 0;
 }
