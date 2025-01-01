@@ -62,7 +62,7 @@ public:
             }
             else
             {
-                Logger::Log(LogLevel::DEBUG, "Pipe::read: Pipe is empty. Waiting for data.");
+                // Logger::Log(LogLevel::DEBUG, "Pipe::read: Pipe is empty. Waiting for data.");
                 condNotEmpty_.wait(lock, [&]
                                    { return !queue_.empty() || stop.load(); });
             }

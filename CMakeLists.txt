@@ -13,12 +13,14 @@ set(SOURCE_FILES
     src/logger.cpp
     src/api_client.cpp
     src/fuse_operations.cpp    
+    src/utils.cpp    
     include/logger.hpp
     include/api_client.hpp
     include/smfs_state.hpp
     include/fuse_operations.hpp
     include/stream_manager.hpp
     include/websocket_client.hpp
+    include/utils.hpp
 )
 
 # Executable

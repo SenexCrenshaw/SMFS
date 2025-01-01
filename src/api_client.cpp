@@ -77,6 +77,16 @@ void APIClient::fetchFileList()
             std::string groupDir = "/" + group.name;
             g_state->files[groupDir] = nullptr; // directory
             Logger::Log(LogLevel::DEBUG, "Created group directory: " + groupDir);
+            std::string subDirPath = groupDir + "/" + group.name;
+
+            // .xml
+            std::string xmlPath = groupDir + "/" + group.name + ".xml";
+            g_state->files[xmlPath] = std::make_shared<VirtualFile>(VirtualFile(group.url));
+            Logger::Log(LogLevel::DEBUG, "Added file: " + xmlPath);
+            // .m3u
+            std::string m3uPath = groupDir + "/" + group.name + ".m3u";
+            g_state->files[m3uPath] = std::make_shared<VirtualFile>(VirtualFile(group.url));
+            Logger::Log(LogLevel::DEBUG, "Added file: " + m3uPath);
 
             if (groupJson.contains("smfs") && groupJson["smfs"].is_array())
             {
@@ -88,9 +98,14 @@ void APIClient::fetchFileList()
 
                     group.addSMFile(smFile);
 
-                    std::string tsPath = groupDir + "/" + smFile.name + ".ts";
+                    std::string tsPath = subDirPath + "/" + smFile.name + ".ts";
                     g_state->files[tsPath] = std::make_shared<VirtualFile>(VirtualFile(smFile.url));
                     Logger::Log(LogLevel::DEBUG, "Added .ts file: " + tsPath);
+
+                    // .strm
+                    std::string strmPath = subDirPath + "/" + smFile.name + ".strm";
+                    g_state->files[strmPath] = std::make_shared<VirtualFile>(VirtualFile(smFile.url));
+                    Logger::Log(LogLevel::DEBUG, "Added file: " + strmPath);
                 }
             }
 
