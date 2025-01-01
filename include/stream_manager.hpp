@@ -33,12 +33,14 @@ public:
     std::atomic<bool> &getStopRequestedAtomic() { return stopRequested_; }
     void startStreaming()
     {
+        Logger::Log(LogLevel::INFO, "StreamManager::startStreaming: Starting stream for URL: " + url_);
         stopRequested_ = false;
         streamingThread_ = std::thread(&StreamManager::streamingThreadFunc, this);
     }
 
     void stopStreaming()
     {
+        Logger::Log(LogLevel::INFO, "StreamManager::stopStreaming: Stopping stream for URL: " + url_);
         stopRequested_ = true;
         if (streamingThread_.joinable())
         {
