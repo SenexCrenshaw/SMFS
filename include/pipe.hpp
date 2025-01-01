@@ -1,3 +1,4 @@
+// pipe.hpp
 #pragma once
 #include <queue>
 #include <mutex>
@@ -46,7 +47,7 @@ public:
         {
             if (stop.load() && queue_.empty())
             {
-                Logger::Log(LogLevel::DEBUG, "Pipe::read: Returning EOF. Pipe is empty and stop is requested.");
+                Logger::Log(LogLevel::TRACE, "Pipe::read: Returning EOF. Pipe is empty and stop is requested.");
                 break;
             }
 
@@ -58,20 +59,20 @@ public:
             }
             else
             {
-                // Logger::Log(LogLevel::DEBUG, "Pipe::read: Pipe is empty. Waiting for data.");
+                Logger::Log(LogLevel::TRACE, "Pipe::read: Waiting for data in the queue.");
                 condNotEmpty_.wait(lock, [&]
                                    { return !queue_.empty() || stop.load(); });
             }
         }
 
-        Logger::Log(LogLevel::DEBUG, "Pipe::read: Read " + std::to_string(bytesRead) + " bytes. Requested: " + std::to_string(len));
+        Logger::Log(LogLevel::TRACE, "Pipe::read: Read " + std::to_string(bytesRead) + " bytes. Requested: " + std::to_string(len));
         if (bytesRead > 0)
         {
             // Logger::Log(LogLevel::DEBUG, "Pipe::read: Read " + std::to_string(bytesRead) + " bytes. Buffer filled partially/completely.");
         }
         else
         {
-            Logger::Log(LogLevel::DEBUG, "Pipe::read: Returning 0 bytes. Pipe is empty.");
+            Logger::Log(LogLevel::TRACE, "Pipe::read: Returning 0 bytes. Pipe is empty.");
         }
         return bytesRead;
     }

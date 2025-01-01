@@ -1,3 +1,4 @@
+// stream_manager.hpp
 #pragma once
 #include "pipe.hpp" // Ensure Pipe is correctly included
 #include <thread>
@@ -166,6 +167,11 @@ private:
             else if (res != CURLE_OK)
             {
                 Logger::Log(LogLevel::ERROR, "StreamManager::streamingThreadFunc: CURL error: " + std::string(curl_easy_strerror(res)));
+                if (isShuttingDown_.load())
+                {
+                    Logger::Log(LogLevel::INFO, "StreamManager::streamingThreadFunc: Exiting due to shutdown for URL: " + url_);
+                    break;
+                }
                 std::this_thread::sleep_for(std::chrono::seconds(5)); // Retry after delay
             }
             else

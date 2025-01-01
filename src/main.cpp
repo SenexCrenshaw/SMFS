@@ -1,4 +1,3 @@
-// main.cpp
 #include "smfs_state.hpp"
 #include "websocket_client.hpp"
 #include "fuse_operations.hpp"
@@ -41,7 +40,7 @@ int main(int argc, char *argv[])
     std::signal(SIGINT, handleSignal);
 
     // Initialize application parameters
-    bool debugMode = false;
+    LogLevel logLevel = LogLevel::INFO; // Default log level
     std::string host = "10.3.10.50";
     std::string port = "7095";
     std::string apiKey = "f4bed758a1aa45a38c801ed6893d70fb";
@@ -81,10 +80,37 @@ int main(int argc, char *argv[])
         if (std::string(argv[i]) == "--help")
         {
             std::cout << "Usage: ./smfs [options]\n"
-                      << "--enable-<filetype>=true/false    Enable or disable specific file types (e.g., ts, strm, m3u, xml)\n"
-                      << "--mount <mountpoint>             Set the FUSE mount point\n"
-                      << "--storageDir <path>              Specify the storage directory\n";
+                      << "--log-level <level>             Set log level (TRACE, DEBUG, INFO, WARN, ERROR, FATAL)\n"
+                      << "--enable-<filetype>=true/false  Enable or disable specific file types (e.g., ts, strm, m3u, xml)\n"
+                      << "--mount <mountpoint>            Set the FUSE mount point\n"
+                      << "--storageDir <path>             Specify the storage directory\n";
             exit(0);
+        }
+        else if (std::string(argv[i]) == "--log-level" && i + 1 < argc)
+        {
+            std::string level = argv[++i];
+
+            // Convert the input level to lowercase
+            std::transform(level.begin(), level.end(), level.begin(), ::tolower);
+
+            if (level == "trace")
+                logLevel = LogLevel::TRACE;
+            else if (level == "debug")
+                logLevel = LogLevel::DEBUG;
+            else if (level == "info")
+                logLevel = LogLevel::INFO;
+            else if (level == "warn")
+                logLevel = LogLevel::WARN;
+            else if (level == "error")
+                logLevel = LogLevel::ERROR;
+            else if (level == "fatal")
+                logLevel = LogLevel::FATAL;
+            else
+            {
+                std::cerr << "Invalid log level: " << level << std::endl;
+                return 1;
+            }
+            std::cout << "Configured log level: " << level << std::endl;
         }
         else if (std::string(argv[i]) == "--host")
             host = argv[++i];
@@ -94,8 +120,6 @@ int main(int argc, char *argv[])
             apiKey = argv[++i];
         else if (std::string(argv[i]) == "--mount")
             mountPoint = argv[++i];
-        else if (std::string(argv[i]) == "--debug")
-            debugMode = true;
         else if (std::string(argv[i]) == "--streamGroupProfileIds")
             streamGroupProfileIds = argv[++i];
         else if (std::string(argv[i]) == "--isShort")
@@ -113,6 +137,7 @@ int main(int argc, char *argv[])
 
     // Initialize Logger
     Logger::InitLogFile("/var/log/smfs/smfs.log");
+    Logger::SetLogLevel(logLevel);
     Logger::Log(LogLevel::INFO, "SMFS starting...");
 
     // Create global SMFS state
@@ -142,31 +167,27 @@ int main(int argc, char *argv[])
 
     // FUSE low-level operations
     struct fuse_lowlevel_ops ll_ops = {};
-    ll_ops.lookup = fs_lookup;         // Low-level equivalent of getattr
-    ll_ops.getattr = fs_getattr;       // Return file attributes
-    ll_ops.readdir = fs_readdir;       // Directory listing
-    ll_ops.open = fs_open;             // Open a file
-    ll_ops.read = fs_read;             // Read file contents
-    ll_ops.write = fs_write;           // Write to a file
-    ll_ops.release = fs_release;       // Close a file
-    ll_ops.opendir = fs_opendir;       // Open a directory
-    ll_ops.releasedir = fs_releasedir; // Close a directory
+    ll_ops.lookup = fs_lookup;
+    ll_ops.getattr = fs_getattr;
+    ll_ops.readdir = fs_readdir;
+    ll_ops.open = fs_open;
+    ll_ops.read = fs_read;
+    ll_ops.write = fs_write;
+    ll_ops.release = fs_release;
+    ll_ops.opendir = fs_opendir;
+    ll_ops.releasedir = fs_releasedir;
 
     // Setup FUSE arguments
-    // Build fuse arguments
     std::vector<std::string> argsList;
-    argsList.push_back(argv[0]); // Program name
+    argsList.push_back(argv[0]);
     argsList.push_back("-o");
-    argsList.push_back("allow_other"); // Allow other users to access the FUSE filesystem
-    // Convert arguments to char*
+    argsList.push_back("allow_other");
     std::vector<char *> fuseArgs;
     for (auto &arg : argsList)
     {
         fuseArgs.push_back(const_cast<char *>(arg.c_str()));
     }
-    fuseArgs.push_back(nullptr); // Null-terminate the argument list
-
-    // Initialize fuse_args
+    fuseArgs.push_back(nullptr);
     struct fuse_args args = FUSE_ARGS_INIT(static_cast<int>(fuseArgs.size()) - 1, fuseArgs.data());
     for (const auto &arg : argsList)
     {
@@ -181,7 +202,6 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    // Mount the FUSE filesystem
     if (fuse_session_mount(g_fuseSession, mountPoint.c_str()) != 0)
     {
         Logger::Log(LogLevel::ERROR, "Failed to mount FUSE filesystem at " + mountPoint);
@@ -189,27 +209,24 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    // Run FUSE multithreaded event loop
     Logger::Log(LogLevel::INFO, "Starting FUSE multithreaded event loop.");
     struct fuse_loop_config config = {};
-    config.clone_fd = 1;          // Enable file descriptor cloning for multithreading
-    config.max_idle_threads = 10; // Limit the number of idle threads
+    config.clone_fd = 1;
+    config.max_idle_threads = 10;
     int result = fuse_session_loop_mt(g_fuseSession, &config);
     if (result != 0)
     {
         Logger::Log(LogLevel::ERROR, "FUSE multithreaded loop exited with error: " + std::to_string(result));
     }
-    // Cleanup
+
     Logger::Log(LogLevel::INFO, "Exiting FUSE session.");
     fuse_session_unmount(g_fuseSession);
     fuse_session_destroy(g_fuseSession);
 
-    // Stop WebSocket client
     try
     {
         Logger::Log(LogLevel::INFO, "Stopping WebSocket client...");
         wsClient.Stop();
-
         if (wsThread.joinable())
         {
             Logger::Log(LogLevel::DEBUG, "Joining WebSocket client thread...");

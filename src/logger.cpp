@@ -1,10 +1,47 @@
 #include "logger.hpp"
-#include <fstream>
 #include <iostream>
-#include <mutex>
+#include <nlohmann/json.hpp>
+#include <chrono>
+#include <iomanip>
+#include <sstream>
 
-static std::mutex g_logMutex;
-static std::ofstream g_logFile;
+std::ofstream Logger::g_logFile;
+std::mutex Logger::g_logMutex;
+LogLevel Logger::currentLogLevel = LogLevel::INFO; // Default to INFO
+
+std::string ToString(LogLevel level)
+{
+    switch (level)
+    {
+    case LogLevel::TRACE:
+        return "TRACE";
+    case LogLevel::DEBUG:
+        return "DEBUG";
+    case LogLevel::INFO:
+        return "INFO";
+    case LogLevel::WARN:
+        return "WARN";
+    case LogLevel::ERROR:
+        return "ERROR";
+    case LogLevel::FATAL:
+        return "FATAL";
+    default:
+        return "UNKNOWN";
+    }
+}
+
+std::string GetCurrentTimestamp()
+{
+    auto now = std::chrono::system_clock::now();
+    std::time_t nowTime = std::chrono::system_clock::to_time_t(now);
+    auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
+
+    std::ostringstream oss;
+    oss << std::put_time(std::localtime(&nowTime), "%Y-%m-%d %H:%M:%S") << '.'
+        << std::setfill('0') << std::setw(3) << nowMs.count();
+
+    return oss.str();
+}
 
 void Logger::InitLogFile(const std::string &filePath)
 {
@@ -22,35 +59,27 @@ void Logger::InitLogFile(const std::string &filePath)
 
 void Logger::Log(LogLevel level, const std::string &msg)
 {
-    std::lock_guard<std::mutex> lock(g_logMutex);
-    if (!g_logFile.is_open())
+    // Skip logs below the current log level
+    if (level < currentLogLevel)
     {
-        // fallback to stderr
-        std::cerr << "[LOGGER] " << msg << std::endl;
         return;
     }
-    std::cout << "[LOGGER] " << msg << std::endl;
-    switch (level)
+
+    std::lock_guard<std::mutex> lock(g_logMutex);
+
+    nlohmann::json logJson;
+    logJson["level"] = ToString(level);
+    logJson["timestamp"] = GetCurrentTimestamp();
+    logJson["message"] = msg;
+
+    if (g_logFile.is_open())
     {
-    case LogLevel::TRACE:
-        g_logFile << "[TRACE] ";
-        break;
-    case LogLevel::DEBUG:
-        g_logFile << "[DEBUG] ";
-        break;
-    case LogLevel::INFO:
-        g_logFile << "[INFO ] ";
-        break;
-    case LogLevel::WARN:
-        g_logFile << "[WARN ] ";
-        break;
-    case LogLevel::ERROR:
-        g_logFile << "[ERROR] ";
-        break;
-    case LogLevel::FATAL:
-        g_logFile << "[FATAL] ";
-        break;
+        g_logFile << logJson.dump() << std::endl;
     }
-    g_logFile << msg << std::endl;
-    g_logFile.flush();
+
+    // Print to stderr for TRACE or DEBUG levels, or based on preference
+    if (level <= LogLevel::DEBUG)
+    {
+        std::cerr << "[" << ToString(level) << "] " << msg << std::endl;
+    }
 }

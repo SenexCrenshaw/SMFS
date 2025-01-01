@@ -26,14 +26,14 @@ fuse_ino_t getInode(const std::string &path)
 
     if (pathToInode.find(path) == pathToInode.end())
     {
-        Logger::Log(LogLevel::DEBUG, "getInode: Inode not found, creating new inode for path: " + path);
+        Logger::Log(LogLevel::TRACE, "getInode: Inode not found, creating new inode for path: " + path);
         pathToInode[path] = nextInode++;
         inodeToPath[pathToInode[path]] = path;
         Logger::Log(LogLevel::DEBUG, "getInode: Created inode " + std::to_string(pathToInode[path]) + " for path: " + path);
     }
     else
     {
-        Logger::Log(LogLevel::DEBUG, "getInode: Found existing inode " + std::to_string(pathToInode[path]) + " for path: " + path);
+        Logger::Log(LogLevel::TRACE, "getInode: Found existing inode " + std::to_string(pathToInode[path]) + " for path: " + path);
     }
 
     return pathToInode[path];
@@ -48,6 +48,7 @@ void fs_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
     // Normalize path (e.g., remove redundant slashes)
     while (path.find("//") != std::string::npos)
     {
+        Logger::Log(LogLevel::TRACE, "fs_lookup: Found redundant slashes in path: " + path);
         path = path.replace(path.find("//"), 2, "/");
     }
 
@@ -64,7 +65,8 @@ void fs_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
             e.attr.st_mode = it->second ? S_IFREG | 0444 : S_IFDIR | 0755;
             e.attr.st_nlink = it->second ? 1 : 2;
             e.attr.st_size = it->second ? INT64_MAX : 0;
-            Logger::Log(LogLevel::DEBUG, "fs_lookup: Resolved inode " + std::to_string(e.ino) + " for path: " + path);
+
+            Logger::Log(LogLevel::TRACE, "fs_lookup: Resolved inode attributes for path: " + path);
             fuse_reply_entry(req, &e);
             return;
         }
@@ -126,7 +128,7 @@ void logRawBuffer(const char *buf, size_t size)
 void fs_readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, struct fuse_file_info *fi)
 {
     Logger::Log(LogLevel::DEBUG, "fs_readdir: Inode: " + std::to_string(ino));
-    Logger::Log(LogLevel::DEBUG, "fs_readdir: Offset: " + std::to_string(off));
+    Logger::Log(LogLevel::TRACE, "fs_readdir: Offset: " + std::to_string(off));
 
     if (off > 0)
     {
@@ -155,13 +157,7 @@ void fs_readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, struct f
 
     auto addDirEntry = [&](const char *name, fuse_ino_t inode, mode_t mode)
     {
-        if (name == nullptr || strlen(name) == 0)
-        {
-            Logger::Log(LogLevel::ERROR, "fs_readdir: Invalid entry name.");
-            return false;
-        }
-
-        Logger::Log(LogLevel::DEBUG, "fs_readdir: Attempting to add entry: " + std::string(name));
+        Logger::Log(LogLevel::TRACE, "fs_readdir: Adding entry: " + std::string(name));
         struct stat st = {};
         st.st_ino = inode;
         st.st_mode = mode;
@@ -169,12 +165,11 @@ void fs_readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, struct f
         size_t entrySize = fuse_add_direntry(req, buf + bufSize, size - bufSize, name, &st, bufSize + 1);
         if (entrySize == 0 || bufSize + entrySize > size)
         {
-            Logger::Log(LogLevel::ERROR, "fs_readdir: Failed to add entry: " + std::string(name));
+            Logger::Log(LogLevel::WARN, "fs_readdir: Buffer full or invalid entry: " + std::string(name));
             return false;
         }
 
         bufSize += entrySize;
-        Logger::Log(LogLevel::DEBUG, "fs_readdir: Successfully added entry: " + std::string(name) + " at offset: " + std::to_string(bufSize));
         return true;
     };
 
@@ -195,10 +190,9 @@ void fs_readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, struct f
 
                 if (relativePath.find('/') == std::string::npos)
                 {
-                    Logger::Log(LogLevel::DEBUG, "fs_readdir: Adding direct child: " + relativePath);
                     if (!addDirEntry(relativePath.c_str(), getInode(kv.first), kv.second ? S_IFREG : S_IFDIR))
                     {
-                        Logger::Log(LogLevel::ERROR, "fs_readdir: Failed to add entry: " + relativePath);
+                        Logger::Log(LogLevel::WARN, "fs_readdir: Failed to add entry: " + relativePath);
                         break;
                     }
                 }
@@ -206,13 +200,8 @@ void fs_readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, struct f
         }
     }
 
-    logRawBuffer(buf, bufSize); // Log buffer contents in raw format
-    Logger::Log(LogLevel::DEBUG, "fs_readdir: Finalizing readdir operation with buffer size: " + std::to_string(bufSize));
-    int result = fuse_reply_buf(req, buf, bufSize);
-    if (result != 0)
-    {
-        Logger::Log(LogLevel::ERROR, "fs_readdir: fuse_reply_buf failed with error: " + std::to_string(result));
-    }
+    Logger::Log(LogLevel::TRACE, "fs_readdir: Returning buffer of size: " + std::to_string(bufSize));
+    fuse_reply_buf(req, buf, bufSize);
     free(buf);
 }
 
@@ -380,7 +369,9 @@ void fs_read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, struct fuse
 
                 char *buf = new char[size];
                 size_t bytesRead = streamManager->getPipe().read(buf, size, g_state->isShuttingDown);
-                Logger::Log(LogLevel::DEBUG, "fs_read: Read " + std::to_string(bytesRead) + " bytes.");
+
+                Logger::Log(LogLevel::TRACE, "fs_read: Pipe::read returned " + std::to_string(bytesRead) + " bytes for path: " + path);
+
                 fuse_reply_buf(req, buf, bytesRead);
                 delete[] buf;
                 return;
