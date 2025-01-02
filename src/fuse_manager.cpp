@@ -12,9 +12,13 @@ FuseManager::~FuseManager()
     Stop();
 }
 
-bool FuseManager::Initialize()
+bool FuseManager::Initialize(bool debugMode)
 {
     std::vector<std::string> argsList = {"fuse_app", "-o", "allow_other"};
+    if (debugMode)
+    {
+        argsList.push_back("-d");
+    }
     std::vector<char *> fuseArgs;
     for (auto &arg : argsList)
     {
@@ -32,9 +36,12 @@ bool FuseManager::Initialize()
     ll_ops.open = fs_open;
     ll_ops.read = fs_read;
     ll_ops.write = fs_write;
+    ll_ops.setattr = fs_setattr;
     ll_ops.release = fs_release;
     ll_ops.opendir = fs_opendir;
     ll_ops.releasedir = fs_releasedir;
+    ll_ops.mknod = fs_mknod;
+    ll_ops.getxattr = fs_getxattr;
 
     session_ = fuse_session_new(&args, &ll_ops, sizeof(ll_ops), nullptr);
     if (!session_)

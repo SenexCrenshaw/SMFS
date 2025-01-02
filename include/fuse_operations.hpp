@@ -27,6 +27,8 @@ void fs_write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t size, off_
 void fs_release(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
 void fs_opendir(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
 void fs_releasedir(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
-
+void fs_setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, struct fuse_file_info *fi);
+void fs_mknod(fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode, dev_t rdev);
+void fs_getxattr(fuse_req_t req, fuse_ino_t ino, const char *name, size_t size);
 // Helper function
 fuse_ino_t getInode(const std::string &path);

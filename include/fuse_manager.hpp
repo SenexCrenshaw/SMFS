@@ -13,7 +13,7 @@ public:
     FuseManager(const std::string &mountPoint);
     ~FuseManager();
 
-    bool Initialize();
+    bool Initialize(bool debugMode);
     void Run();
     void Stop();
 

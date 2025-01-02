@@ -112,16 +112,25 @@ void WebSocketClient::ConnectAndListen()
             tcp::resolver resolver{ioc};
             auto const results = resolver.resolve(host_, port_);
             websocket::stream<beast::tcp_stream> ws{ioc};
+
+            // Attempt to connect
+            Logger::Log(LogLevel::INFO, "Attempting WebSocket connection...");
             ws.next_layer().connect(*results.begin());
             ws.handshake(host_, "/ws");
-
             Logger::Log(LogLevel::INFO, "WebSocket connection established.");
-
+            // Fetch the file list after reconnecting
+            if (g_state != nullptr)
+            {
+                Logger::Log(LogLevel::INFO, "Fetching file list after reconnecting...");
+                g_state->apiClient.fetchFileList();
+                Logger::Log(LogLevel::INFO, "File list fetched successfully after reconnecting.");
+            }
             beast::flat_buffer buffer;
             while (shouldRun)
             {
                 try
                 {
+                    // Read messages
                     ws.read(buffer);
                     HandleMessage(beast::buffers_to_string(buffer.data()));
                     buffer.consume(buffer.size());
@@ -137,6 +146,13 @@ void WebSocketClient::ConnectAndListen()
                     throw; // Rethrow other exceptions
                 }
             }
+
+            // Cleanly close the WebSocket
+            if (shouldRun)
+            {
+                Logger::Log(LogLevel::INFO, "Closing WebSocket connection...");
+                ws.close(websocket::close_code::normal);
+            }
         }
         catch (const std::exception &e)
         {
@@ -146,10 +162,13 @@ void WebSocketClient::ConnectAndListen()
         if (!shouldRun)
             break;
 
+        // Reconnect with exponential backoff
         Logger::Log(LogLevel::INFO, "Retrying connection in " + std::to_string(retryDelay) + " seconds.");
         std::this_thread::sleep_for(std::chrono::seconds(retryDelay));
         retryDelay = std::min(retryDelay * 2, 32); // Exponential backoff up to 32 seconds
     }
+
+    Logger::Log(LogLevel::INFO, "WebSocketClient::ConnectAndListen exiting.");
 }
 
 // Handle incoming messages

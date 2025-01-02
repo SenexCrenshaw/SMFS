@@ -11,6 +11,7 @@
 #include <set>
 #include <cstring>
 #include <chrono>
+#include <fuse_operations.hpp>
 
 // Global pointers
 SMFS *g_state = nullptr;
@@ -39,12 +40,12 @@ int main(int argc, char *argv[])
 
     // Initialize application parameters
     LogLevel logLevel = LogLevel::INFO; // Default log level
-    bool debugMode = false;
+    bool debugMode = true;
     std::string host = "10.3.10.50";
     std::string port = "7095";
     std::string apiKey = "f4bed758a1aa45a38c801ed6893d70fb";
-    std::string mountPoint = "/mnt/fuse";
-    std::string storageDir = "/tmp/smfs_storage";
+    std::string mountPoint = "/mnt/smfs";
+    std::string cacheDir = "/tmp/smfs_storage";
     std::string streamGroupProfileIds = "3";
     bool isShort = true;
     std::set<std::string> enabledFileTypes{"xml", "m3u", "strm"};
@@ -83,7 +84,7 @@ int main(int argc, char *argv[])
                       << "--log-level <level>             Set log level (TRACE, DEBUG, INFO, WARN, ERROR, FATAL)\n"
                       << "--enable-<filetype>=true/false  Enable or disable specific file types (e.g., ts, strm, m3u, xml)\n"
                       << "--mount <mountpoint>            Set the FUSE mount point\n"
-                      << "--storageDir <path>             Specify the storage directory\n";
+                      << "--cacheDir <path>               Specify the cache directory\n";
             exit(0);
         }
         else if (std::string(argv[i]) == "--debug")
@@ -125,8 +126,8 @@ int main(int argc, char *argv[])
             streamGroupProfileIds = argv[++i];
         else if (std::string(argv[i]) == "--isShort")
             isShort = (std::string(argv[++i]) == "true");
-        else if (std::string(argv[i]) == "--storageDir")
-            storageDir = argv[++i];
+        else if (std::string(argv[i]) == "--cacheDir")
+            cacheDir = argv[++i];
         else
         {
             parseEnableFlag(argv[i], "m3u");
@@ -145,8 +146,9 @@ int main(int argc, char *argv[])
     // Initialize FuseManager
     FuseManager manager(mountPoint);
     fuseManager = &manager;
-
-    if (!manager.Initialize())
+    inodeToPath[FUSE_ROOT_ID] = "";
+    pathToInode["/"] = FUSE_ROOT_ID;
+    if (!manager.Initialize(debugMode))
     {
         Logger::Log(LogLevel::ERROR, "Failed to initialize FUSE.");
         return 1;
@@ -154,7 +156,9 @@ int main(int argc, char *argv[])
 
     // Create global SMFS state
     g_state = new SMFS(host, port, apiKey, streamGroupProfileIds, isShort);
-    g_state->storageDir = storageDir;
+
+    g_state->cacheDir = cacheDir;
+    Logger::Log(LogLevel::INFO, "Cache directory set to: " + cacheDir);
     g_state->enabledFileTypes = std::move(enabledFileTypes);
 
     for (const auto &fileType : enabledFileTypes)

@@ -30,9 +30,27 @@ struct VirtualFile
     uid_t st_uid = 0;      // optional
     gid_t st_gid = 0;      // optional
 
+    // Default constructor
     VirtualFile() = default;
+
+    // Constructor for URL only
     explicit VirtualFile(const std::string &u)
         : url(u) {}
+
+    // Constructor for URL and other attributes
+    VirtualFile(const std::string &u, mode_t mode, uid_t uid, gid_t gid, bool isUser = false)
+        : url(u), st_mode(mode), st_uid(uid), st_gid(gid), isUserFile(isUser) {}
+
+    // Constructor for URL and size (added to match the usage)
+    VirtualFile(const std::string &u, long int size)
+        : url(u)
+    {
+        // Initialize `content` if size > 0
+        if (size > 0)
+        {
+            content = std::make_shared<std::vector<char>>(size);
+        }
+    }
 
     // No copy
     VirtualFile(const VirtualFile &) = delete;
@@ -48,7 +66,7 @@ struct SMFS
 {
     std::atomic<bool> isShuttingDown{false};
     std::set<std::string> enabledFileTypes;
-    std::string storageDir;
+    std::string cacheDir;
     // Map of path -> VirtualFile (or nullptr if directory)
     std::map<std::string, std::shared_ptr<VirtualFile>> files;
     std::mutex filesMutex;
