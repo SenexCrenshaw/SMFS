@@ -14,6 +14,10 @@ set(SOURCE_FILES
     src/api_client.cpp
     src/fuse_operations.cpp
     src/fuse_manager.cpp
+    src/async_curl_client.cpp
+    src/stream_manager.cpp
+    include/i_streaming_client.hpp
+    include/async_curl_client.hpp
     include/logger.hpp
     include/api_client.hpp
     include/smfs_state.hpp

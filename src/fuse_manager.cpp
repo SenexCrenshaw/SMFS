@@ -1,3 +1,4 @@
+// File: fuse_manager.cpp
 #include "fuse_manager.hpp"
 #include "fuse_operations.hpp"
 #include "logger.hpp"

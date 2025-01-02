@@ -1,3 +1,4 @@
+// File: logger.cpp
 #include "logger.hpp"
 #include <iostream>
 #include <nlohmann/json.hpp>

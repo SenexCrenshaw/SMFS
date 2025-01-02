@@ -1,4 +1,4 @@
-// websocket_client.hpp
+// File: websocket_client.hpp
 #pragma once
 
 #include <boost/beast/core.hpp>

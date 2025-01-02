@@ -1,4 +1,4 @@
-// api_client.cpp
+// File: api_client.cpp
 #include "api_client.hpp"
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
@@ -78,11 +78,23 @@ void APIClient::processResponse(const std::string &response)
 {
     try
     {
+        // Debug log the received JSON response
+        Logger::Log(LogLevel::DEBUG, "Received JSON response: " + response);
+
         auto jsonResponse = json::parse(response);
         groups.clear();
 
         std::lock_guard<std::mutex> lock(g_state->filesMutex);
         g_state->files.clear();
+
+        auto isFileTypeEnabled = [](const std::string &fileName)
+        {
+            size_t dotPos = fileName.find_last_of('.');
+            if (dotPos == std::string::npos)
+                return false;                                    // No extension, not enabled
+            std::string extension = fileName.substr(dotPos + 1); // Extract extension
+            return g_state->enabledFileTypes.find(extension) != g_state->enabledFileTypes.end();
+        };
 
         for (auto &entry : jsonResponse.items())
         {
@@ -99,13 +111,18 @@ void APIClient::processResponse(const std::string &response)
 
             // Add .xml and .m3u files
             std::string xmlPath = groupDir + "/" + group.name + ".xml";
-            g_state->files[xmlPath] = std::make_shared<VirtualFile>(group.url + ".xml");
-            Logger::Log(LogLevel::DEBUG, "Added .xml file: " + xmlPath);
+            if (isFileTypeEnabled(xmlPath))
+            {
+                g_state->files[xmlPath] = std::make_shared<VirtualFile>(group.url + ".xml");
+                Logger::Log(LogLevel::DEBUG, "Added .xml file: " + xmlPath);
+            }
 
             std::string m3uPath = groupDir + "/" + group.name + ".m3u";
-            g_state->files[m3uPath] = std::make_shared<VirtualFile>(group.url + ".m3u");
-            Logger::Log(LogLevel::DEBUG, "Added .m3u file: " + m3uPath);
-
+            if (isFileTypeEnabled(m3uPath))
+            {
+                g_state->files[m3uPath] = std::make_shared<VirtualFile>(group.url + ".m3u");
+                Logger::Log(LogLevel::DEBUG, "Added .m3u file: " + m3uPath);
+            }
             // Process sub-files in the group
             if (groupJson.contains("smfs") && groupJson["smfs"].is_array())
             {
@@ -123,26 +140,21 @@ void APIClient::processResponse(const std::string &response)
                         g_state->files[subDirPath] = nullptr; // Create subgroup directory
                         Logger::Log(LogLevel::DEBUG, "Added subgroup directory: " + subDirPath);
                     }
-                    else
-                    {
-                        Logger::Log(LogLevel::WARN, "Subgroup directory already exists: " + subDirPath);
-                    }
 
                     // Add .strm file
                     std::string strmPath = subDirPath + "/" + smFile.name + ".strm";
-                    g_state->files[strmPath] = std::make_shared<VirtualFile>(smFile.url);
-                    Logger::Log(LogLevel::DEBUG, "Added .strm file: " + strmPath);
+                    if (isFileTypeEnabled(strmPath))
+                    {
+                        g_state->files[strmPath] = std::make_shared<VirtualFile>(smFile.url);
+                        Logger::Log(LogLevel::DEBUG, "Added .strm file: " + strmPath);
+                    }
 
                     // Add .ts file
                     std::string tsPath = subDirPath + "/" + smFile.name + ".ts";
-                    if (g_state->files.find(tsPath) == g_state->files.end())
+                    if (isFileTypeEnabled(tsPath))
                     {
                         g_state->files[tsPath] = std::make_shared<VirtualFile>(smFile.url);
                         Logger::Log(LogLevel::DEBUG, "Added .ts file: " + tsPath);
-                    }
-                    else
-                    {
-                        Logger::Log(LogLevel::ERROR, "Conflict: .ts file already exists for path: " + tsPath);
                     }
                 }
             }

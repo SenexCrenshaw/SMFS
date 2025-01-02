@@ -1,3 +1,4 @@
+// File: fuse_operations.hpp
 #pragma once
 #define FUSE_USE_VERSION 35
 

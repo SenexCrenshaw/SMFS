@@ -90,6 +90,7 @@
         "__tree": "cpp",
         "queue": "cpp",
         "stack": "cpp",
-        "__config": "cpp"
+        "__config": "cpp",
+        "t": "cpp"
     }
 }

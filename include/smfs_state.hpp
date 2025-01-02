@@ -1,4 +1,4 @@
-// smfs_state.hpp
+// File: smfs_state.hpp
 #pragma once
 
 #include <map>
@@ -25,10 +25,10 @@ struct VirtualFile
     std::unique_ptr<StreamManager> streamContext;
 
     bool isUserFile = false;
-    std::shared_ptr<std::vector<char>> content;
     mode_t st_mode = 0111; // default
     uid_t st_uid = 0;      // optional
     gid_t st_gid = 0;      // optional
+    std::shared_ptr<std::vector<char>> content;
 
     // Default constructor
     VirtualFile() = default;
@@ -39,9 +39,9 @@ struct VirtualFile
 
     // Constructor for URL and other attributes
     VirtualFile(const std::string &u, mode_t mode, uid_t uid, gid_t gid, bool isUser = false)
-        : url(u), st_mode(mode), st_uid(uid), st_gid(gid), isUserFile(isUser) {}
+        : url(u), isUserFile(isUser), st_mode(mode), st_uid(uid), st_gid(gid) {}
 
-    // Constructor for URL and size (added to match the usage)
+    // Constructor for URL and size
     VirtualFile(const std::string &u, long int size)
         : url(u)
     {
@@ -87,4 +87,4 @@ struct SMFS
     SMFS &operator=(const SMFS &) = delete;
 };
 
-extern SMFS *g_state;
+extern std::unique_ptr<SMFS> g_state;

@@ -1,3 +1,4 @@
+// File: main.cpp
 #include "fuse_manager.hpp"
 #include "smfs_state.hpp"
 #include "websocket_client.hpp"
@@ -12,24 +13,64 @@
 #include <cstring>
 #include <chrono>
 #include <fuse_operations.hpp>
+#include <algorithm>
+#include <memory>
 
 // Global pointers
-SMFS *g_state = nullptr;
+std::unique_ptr<SMFS> g_state;
 std::atomic<bool> exitRequested{false};
-FuseManager *fuseManager = nullptr;
+std::unique_ptr<FuseManager> fuseManager;
 
 // Signal handler to gracefully exit
 void handleSignal(int signal)
 {
     if (signal == SIGINT)
     {
-        Logger::Log(LogLevel::INFO, "SIGINT received. Exiting...");
-        if (fuseManager)
+        exitRequested = true; // Set exit flag
+    }
+}
+
+void parseEnableFlag(const std::string &arg, std::set<std::string> &enabledFileTypes)
+{
+    if (arg.find("--enable-") == 0)
+    {
+        size_t equalPos = arg.find('=');
+        if (equalPos != std::string::npos)
         {
-            fuseManager->Stop();
+            std::string fileType = arg.substr(9, equalPos - 9); // Extract file type
+            std::string value = arg.substr(equalPos + 1);       // Extract value
+
+            if (value == "true")
+            {
+                enabledFileTypes.insert(fileType);
+            }
+            else if (value == "false")
+            {
+                enabledFileTypes.erase(fileType);
+            }
+            else
+            {
+                std::cerr << "Invalid value for " << arg << ". Use true or false." << std::endl;
+            }
         }
-        exitRequested = true;
-        Logger::Log(LogLevel::INFO, "Signal handler completed. Waiting for shutdown...");
+        else
+        {
+            std::cerr << "Invalid argument format: " << arg << ". Expected --enable-<type>=<value>" << std::endl;
+        }
+    }
+}
+
+void stopAllStreams()
+{
+    std::lock_guard<std::mutex> lock(g_state->filesMutex);
+    for (auto &file : g_state->files)
+    {
+        if (file.second && file.second->streamContext)
+        {
+            Logger::Log(LogLevel::INFO, "Stopping stream for path: " + file.first);
+            file.second->streamContext->stopStreaming();
+            file.second->streamContext.reset();
+        }
     }
 }
 
@@ -40,59 +81,36 @@ int main(int argc, char *argv[])
 
     // Initialize application parameters
     LogLevel logLevel = LogLevel::INFO; // Default log level
-    bool debugMode = true;
+    bool debugMode = false;
     std::string host = "10.3.10.50";
     std::string port = "7095";
     std::string apiKey = "f4bed758a1aa45a38c801ed6893d70fb";
     std::string mountPoint = "/mnt/smfs";
     std::string cacheDir = "/tmp/smfs_storage";
-    std::string streamGroupProfileIds = "3";
+    std::string streamGroupProfileIds = "5";
     bool isShort = true;
-    std::set<std::string> enabledFileTypes{"xml", "m3u", "strm"};
+    std::set<std::string> enabledFileTypes{"xml", "m3u", "ts"};
 
     // Parse arguments
-    auto parseEnableFlag = [&](const std::string &arg, const std::string &fileType)
-    {
-        std::string prefix = "--enable-" + fileType;
-        if (arg.find(prefix) == 0)
-        {
-            if (arg == prefix)
-            {
-                enabledFileTypes.insert(fileType);
-            }
-            else if (arg.find('=') != std::string::npos)
-            {
-                std::string value = arg.substr(arg.find('=') + 1);
-                if (value == "false")
-                {
-                    enabledFileTypes.erase(fileType);
-                }
-                else if (value == "true")
-                {
-                    enabledFileTypes.insert(fileType);
-                }
-            }
-        }
-    };
-
     for (int i = 1; i < argc; i++)
     {
-        if (std::string(argv[i]) == "--help")
+        std::string arg = argv[i];
+        if (arg == "--help")
         {
             std::cout << "Usage: ./smfs [options]\n"
                       << "--debug                         Enable debug mode (equivalent to --log-level DEBUG)\n"
                       << "--log-level <level>             Set log level (TRACE, DEBUG, INFO, WARN, ERROR, FATAL)\n"
                       << "--enable-<filetype>=true/false  Enable or disable specific file types (e.g., ts, strm, m3u, xml)\n"
                       << "--mount <mountpoint>            Set the FUSE mount point\n"
+                      << "--mount <mountpoint>            Set the FUSE mount point\n"
                       << "--cacheDir <path>               Specify the cache directory\n";
             exit(0);
         }
-        else if (std::string(argv[i]) == "--debug")
+        else if (arg == "--debug")
         {
             debugMode = true;
-            logLevel = LogLevel::DEBUG;
         }
-        else if (std::string(argv[i]) == "--log-level" && i + 1 < argc)
+        else if (arg == "--log-level" && i + 1 < argc)
         {
             std::string level = argv[++i];
             std::transform(level.begin(), level.end(), level.begin(), ::tolower);
@@ -114,29 +132,30 @@ int main(int argc, char *argv[])
                 return 1;
             }
         }
-        else if (std::string(argv[i]) == "--host")
+        else if (arg == "--host")
             host = argv[++i];
-        else if (std::string(argv[i]) == "--port")
+        else if (arg == "--port")
             port = argv[++i];
-        else if (std::string(argv[i]) == "--apikey")
+        else if (arg == "--apikey")
             apiKey = argv[++i];
-        else if (std::string(argv[i]) == "--mount")
+        else if (arg == "--mount")
             mountPoint = argv[++i];
-        else if (std::string(argv[i]) == "--streamGroupProfileIds")
+        else if (arg == "--streamGroupProfileIds")
             streamGroupProfileIds = argv[++i];
-        else if (std::string(argv[i]) == "--isShort")
+        else if (arg == "--isShort")
             isShort = (std::string(argv[++i]) == "true");
-        else if (std::string(argv[i]) == "--cacheDir")
+        else if (arg == "--cacheDir")
             cacheDir = argv[++i];
         else
         {
-            parseEnableFlag(argv[i], "m3u");
-            parseEnableFlag(argv[i], "xml");
-            parseEnableFlag(argv[i], "strm");
-            parseEnableFlag(argv[i], "ts");
+            parseEnableFlag(arg, enabledFileTypes);
         }
     }
 
+    if (debugMode)
+    {
+        logLevel = LogLevel::DEBUG;
+    }
     // Initialize Logger
     Logger::InitLogFile("/var/log/smfs/smfs.log");
     Logger::SetLogLevel(logLevel);
@@ -144,24 +163,23 @@ int main(int argc, char *argv[])
     Logger::Log(LogLevel::INFO, "SMFS starting...");
 
     // Initialize FuseManager
-    FuseManager manager(mountPoint);
-    fuseManager = &manager;
-    inodeToPath[FUSE_ROOT_ID] = "";
+    fuseManager = std::make_unique<FuseManager>(mountPoint);
+    inodeToPath[FUSE_ROOT_ID] = "/";
     pathToInode["/"] = FUSE_ROOT_ID;
-    if (!manager.Initialize(debugMode))
+    if (!fuseManager->Initialize(debugMode))
     {
         Logger::Log(LogLevel::ERROR, "Failed to initialize FUSE.");
         return 1;
     }
 
     // Create global SMFS state
-    g_state = new SMFS(host, port, apiKey, streamGroupProfileIds, isShort);
+    g_state = std::make_unique<SMFS>(host, port, apiKey, streamGroupProfileIds, isShort);
 
     g_state->cacheDir = cacheDir;
     Logger::Log(LogLevel::INFO, "Cache directory set to: " + cacheDir);
     g_state->enabledFileTypes = std::move(enabledFileTypes);
 
-    for (const auto &fileType : enabledFileTypes)
+    for (const auto &fileType : g_state->enabledFileTypes)
     {
         Logger::Log(LogLevel::INFO, "Enabled file type: " + fileType);
     }
@@ -173,20 +191,18 @@ int main(int argc, char *argv[])
     WebSocketClient wsClient(host, port, apiKey);
     std::thread wsThread([&wsClient]()
                          {
-        Logger::Log(LogLevel::INFO, "Starting WebSocket client thread...");
-        wsClient.Start(); });
+                             Logger::Log(LogLevel::INFO, "Starting WebSocket client thread...");
+                             wsClient.Start(); });
 
     // Run the FUSE session
-    manager.Run();
+    fuseManager->Run();
 
     // Wait for shutdown
     while (!exitRequested)
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
-
-    // Logger::Log(LogLevel::DEBUG, "FUSE thread state: joinable=" + std::to_string(fuseThread_.joinable()));
-    // Logger::Log(LogLevel::DEBUG, "Session state: session_=" + std::string(session_ ? "valid" : "null"));
+    stopAllStreams();
 
     Logger::Log(LogLevel::INFO, "Stopping WebSocket client...");
     wsClient.Stop();
@@ -196,6 +212,5 @@ int main(int argc, char *argv[])
     }
 
     Logger::Log(LogLevel::INFO, "SMFS exited cleanly.");
-    delete g_state;
     return 0;
 }

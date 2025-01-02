@@ -1,4 +1,4 @@
-// pipe.hpp
+// File: pipe.hpp
 #pragma once
 #include <queue>
 #include <mutex>

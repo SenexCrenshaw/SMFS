@@ -14,6 +14,18 @@
             },
             "problemMatcher": [],
             "detail": "Build the project using CMake"
+        },
+         {
+            "label": "Add Filename Header",
+            "type": "shell",
+            "command": "python",
+            "args": ["add_filename_header.py"],
+            "problemMatcher": [],
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+            "detail": "Prepends the filename to all .cpp and .hpp files."
         }
     ],
     "version": "2.0.0"
