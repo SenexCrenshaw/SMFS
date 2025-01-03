@@ -5,6 +5,14 @@ on:
   #   branches:
   #     - main
   workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to release'
+        required: false
+        default: 'main'
+      version:
+        description: 'Specify version'
+        required: false
 
 jobs:
   release:
@@ -13,23 +21,14 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v3
 
-      - name: Set Up Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: 18
-
-      - name: Install Dependencies
-        run: npm install
+      - name: Install Build Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm dpkg
 
       - name: Build and Test
         run: |
           ./build.sh
-
-      - name: Semantic Release
-        id: semantic_release # Save the step ID to access outputs
-        env:          
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx semantic-release
 
       - name: Package for Linux
         run: |
@@ -39,7 +38,7 @@ jobs:
       - name: Upload `.deb` Package to Release
         uses: actions/upload-release-asset@v1
         with:
-          upload_url: ${{ steps.semantic_release.outputs.upload_url }}
+          upload_url: ${{ github.event.release.upload_url }}
           asset_path: build/*.deb
           asset_name: smfs_${{ github.ref_name }}.deb
           asset_content_type: application/x-deb
@@ -47,7 +46,7 @@ jobs:
       - name: Upload `.rpm` Package to Release
         uses: actions/upload-release-asset@v1
         with:
-          upload_url: ${{ steps.semantic_release.outputs.upload_url }}
+          upload_url: ${{ github.event.release.upload_url }}
           asset_path: build/x86_64/*.rpm
           asset_name: smfs_${{ github.ref_name }}.rpm
           asset_content_type: application/x-rpm
