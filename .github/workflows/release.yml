@@ -58,7 +58,7 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }} # Use the tag triggering the workflow
           name: "Release ${{ github.ref_name }} (Tag: ${{ github.ref_name }})"
-          body_path: CHANGELOG.md
+          body: ${{steps.build_changelog.outputs.changelog}}
           files: |
             build/*.deb
             build/x86_64/*.rpm
