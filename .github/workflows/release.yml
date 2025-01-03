@@ -47,7 +47,7 @@ jobs:
         env:
           SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt 
         run: |
-          $HOME/.local/bin/github_changelog_generator \
+          /home/runner/.local/share/gem/ruby/3.2.0/bin/github_changelog_generator \
             --user ${{ github.repository_owner }} \
             --project ${{ github.event.repository.name }} \
             --token ${{ secrets.GITHUB_TOKEN }} \
