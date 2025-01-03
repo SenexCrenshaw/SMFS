@@ -39,7 +39,9 @@ jobs:
             
       - name: Install `github-changelog-generator`
         run: |
-          gem install github_changelog_generator
+          gem install --user-install github_changelog_generator
+          # Add the local gem binary path to PATH
+          echo 'export PATH="$HOME/.local/bin:$PATH"' >> $GITHUB_ENV
       
       - name: Generate Changelog
         env:
