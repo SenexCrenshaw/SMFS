@@ -11,8 +11,8 @@ on:
         required: false
         default: 'main'
       version:
-        description: 'Specify version'
-        required: false
+        description: 'Specify version (e.g., 1.0.0)'
+        required: true
 
 permissions:
   contents: write
@@ -28,7 +28,6 @@ jobs:
           ref: ${{ github.event.inputs.branch || 'main' }} # Default to 'main' if not specified
       
       - name: Create Tag
-        if: ${{ github.event.inputs.version != '' }}
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
@@ -65,8 +64,8 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }} # Use the tag triggering the workflow
-          name: "Release ${{ github.ref_name }} (Tag: ${{ github.ref_name }})"
+          tag_name: v${{ github.event.inputs.version }} # Use the provided version
+          name: "Release v${{ github.event.inputs.version }}"
           body: ${{steps.build_changelog.outputs.changelog}}
           files: |
             build/*.deb
