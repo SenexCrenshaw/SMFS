@@ -21,10 +21,15 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v3
 
-      - name: Install Build Tools
+      - name: Install Build Tools and Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y rpm dpkg
+          sudo apt-get install -y \
+            libfuse3-dev \
+            libcurl4-openssl-dev \
+            build-essential \
+            cmake \
+            rpm
 
       - name: Build and Test
         run: |
