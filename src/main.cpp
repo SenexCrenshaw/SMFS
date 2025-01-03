@@ -58,9 +58,9 @@ void loadConfig(const std::string &configPath, std::string &host, std::string &p
 // Signal handler to gracefully exit
 void handleSignal(int signal)
 {
-    if (signal == SIGINT)
+    if (signal == SIGINT || signal == SIGTERM)
     {
-        exitRequested = true; // Set exit flag
+        exitRequested = true;
     }
 }
 
@@ -112,6 +112,7 @@ int main(int argc, char *argv[])
 {
     // Register signal handler
     std::signal(SIGINT, handleSignal);
+    std::signal(SIGTERM, handleSignal);
 
     // Initialize application parameters with defaults
     LogLevel logLevel = LogLevel::INFO; // Default log level
