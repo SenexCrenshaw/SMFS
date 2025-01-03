@@ -35,23 +35,7 @@ jobs:
             rpm \
             libboost-all-dev \
             nlohmann-json3-dev
-            
-      # - name: Install `github-changelog-generator`
-      #   run: |
-      #     gem install --user-install github_changelog_generator
-      #     # Add the local gem binary path to PATH
-      #     echo 'export PATH="$HOME/.local/bin:$PATH"' >> $GITHUB_ENV
-      
-      # - name: Generate Changelog
-      #   env:
-      #     SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt 
-      #   run: |
-      #     /home/runner/.local/share/gem/ruby/3.2.0/bin/github_changelog_generator \
-      #       --user ${{ github.repository_owner }} \
-      #       --project ${{ github.event.repository.name }} \
-      #       --token ${{ secrets.GITHUB_TOKEN }} \
-      #       --output CHANGELOG.md
-          
+  
       - name: "Build Changelog"
         id: build_changelog
         uses: mikepenz/release-changelog-builder-action@v5
