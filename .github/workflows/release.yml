@@ -36,6 +36,18 @@ jobs:
             libboost-all-dev \
             nlohmann-json3-dev
 
+      - name: Install `github-changelog-generator`
+        run: |
+          sudo gem install github_changelog_generator
+      
+      - name: Generate Changelog
+        run: |
+          github_changelog_generator \
+            --user ${{ github.repository_owner }} \
+            --project ${{ github.event.repository.name }} \
+            --token ${{ secrets.GITHUB_TOKEN }} \
+            --output CHANGELOG.md
+          
       - name: Build and Test
         run: |
           ./build.sh
@@ -58,11 +70,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }} # Use the tag triggering the workflow
-          name: Release ${{ github.ref_name }}
-          # body: |
-          #   ### Notable Changes
-          #   - Built `.deb` and `.rpm` packages for this release.
-          #   - Use the following assets for installation.
+          name: "Release ${{ github.ref_name }} (Tag: ${{ github.ref_name }})"
+          body_path: CHANGELOG.md
           files: |
             build/*.deb
             build/x86_64/*.rpm
