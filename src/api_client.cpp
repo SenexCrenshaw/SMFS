@@ -23,7 +23,14 @@ APIClient::APIClient(const std::string &host,
                      bool isShort)
 {
     // Example: "http://localhost:7095/api/files/getsmfs/testkey/2/true"
-    baseUrl = "http://" + host + ":" + port + "/api/files/getsmfs/" + apiKey + "/" + streamGroupProfileIds + "/" + (isShort ? "true" : "false");
+    // baseUrl = "http://" + host + ":" + port + "/api/files/getsmfs/" + apiKey + "/" + (isShort ? "true" : "false") + "/" + streamGroupProfileIds;
+    baseUrl = "http://" + host + ":" + port + "/api/files/getsmfs/" + apiKey + "/" + (isShort ? "true" : "false");
+
+    // Append streamGroupProfileIds if it's not empty
+    if (!streamGroupProfileIds.empty())
+    {
+        baseUrl += "/" + streamGroupProfileIds;
+    }
 }
 
 const std::map<int, SGFS> &APIClient::getGroups() const
