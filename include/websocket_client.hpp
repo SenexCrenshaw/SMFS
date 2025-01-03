@@ -1,3 +1,4 @@
+// File: websocket_client.hpp
 #ifndef WEBSOCKET_CLIENT_HPP
 #define WEBSOCKET_CLIENT_HPP
 

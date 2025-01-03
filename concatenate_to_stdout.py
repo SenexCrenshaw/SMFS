@@ -1,11 +1,12 @@
 import os
 import sys
 
-def concatenate_to_stdout(base_directories, file_extensions=('.cpp', '.hpp')):
+def concatenate_to_stdout(base_directories, file_extensions=('.cpp', '.hpp', 'CMakeLists.txt')):
     for base_dir in base_directories:
         for root, _, files in os.walk(base_dir):
             for file in files:
-                if file.endswith(file_extensions):
+                # Check for extensions or explicit CMakeLists.txt match
+                if file.endswith(file_extensions) or file == 'CMakeLists.txt':
                     file_path = os.path.join(root, file)
                     try:
                         with open(file_path, 'r', encoding='utf-8') as infile:

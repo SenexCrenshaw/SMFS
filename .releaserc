@@ -1,0 +1,31 @@
+{
+  "branches": ["main"],
+  "plugins": [
+    "@semantic-release/commit-analyzer",
+    "@semantic-release/release-notes-generator",
+    "@semantic-release/changelog",
+    "@semantic-release/github",
+    "@semantic-release/exec",
+    [
+      "@semantic-release/exec",
+      {
+        "prepareCmd": "./package-deb.sh && ./package-rpm.sh"
+      }
+    ],
+    [
+      "@semantic-release/github",
+      {
+        "assets": [
+          {
+            "path": "dist/*.deb",
+            "label": "Debian/Ubuntu Package"
+          },
+          {
+            "path": "dist/*.rpm",
+            "label": "Fedora/RedHat/CentOS Package"
+          }
+        ]
+      }
+    ]
+  ]
+}
