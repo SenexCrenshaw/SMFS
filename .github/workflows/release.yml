@@ -36,11 +36,24 @@ jobs:
       - name: Build and Test
         run: |
           ./build.sh
-
+      
       - name: Package for Linux
         run: |
           ./package-deb.sh
           ./package-rpm.sh
+      
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }} # Tag triggering the workflow
+          release_name: Release ${{ github.ref_name }}
+          body: |
+            Release notes for ${{ github.ref_name }}
+          draft: false
+          prerelease: false
 
       - name: Upload `.deb` Package to Release
         uses: actions/upload-release-asset@v1
