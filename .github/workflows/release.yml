@@ -45,27 +45,27 @@ jobs:
           ./package-deb.sh
           ./package-rpm.sh
       
+      # - name: Create Release
+      #   id: create_release
+      #   uses: elgohr/Github-Release-Action@v5
+      #   env:
+      #     GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      #   with:
+      #     tag: ${{ github.ref_name }}
+      #     title: Release ${{ github.ref_name }}  
+
       - name: Create Release
-        id: create_release
-        uses: elgohr/Github-Release-Action@v5
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: softprops/action-gh-release@v2
         with:
-          tag: ${{ github.ref_name }}
-          title: Release ${{ github.ref_name }}  
-
-      - name: Upload `.deb` Package to Release
-        uses: actions/upload-release-asset@v1
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: build/*.deb
-          asset_name: smfs_${{ github.ref_name }}.deb
-          asset_content_type: application/x-deb
-
-      - name: Upload `.rpm` Package to Release
-        uses: actions/upload-release-asset@v1
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: build/x86_64/*.rpm
-          asset_name: smfs_${{ github.ref_name }}.rpm
-          asset_content_type: application/x-rpm
+          tag_name: ${{ github.ref_name }} # Use the tag triggering the workflow
+          name: Release ${{ github.ref_name }}
+          # body: |
+          #   ### Notable Changes
+          #   - Built `.deb` and `.rpm` packages for this release.
+          #   - Use the following assets for installation.
+          files: |
+            build/*.deb
+            build/x86_64/*.rpm
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true
