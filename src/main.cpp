@@ -15,11 +15,45 @@
 #include <fuse_operations.hpp>
 #include <algorithm>
 #include <memory>
+#include <fstream>
+#include <nlohmann/json.hpp>
 
 // Global pointers
 std::unique_ptr<SMFS> g_state;
 std::atomic<bool> exitRequested{false};
 std::unique_ptr<FuseManager> fuseManager;
+
+void loadConfig(const std::string &configPath, std::string &host, std::string &port, std::string &apiKey,
+                std::string &mountPoint, std::string &cacheDir, std::set<std::string> &enabledFileTypes,
+                bool &isShort, LogLevel &logLevel)
+{
+    std::ifstream configFile(configPath);
+    if (!configFile.is_open())
+    {
+        throw std::runtime_error("Failed to open config file: " + configPath);
+    }
+
+    nlohmann::json config;
+    configFile >> config;
+
+    host = config.value("host", host);
+    port = config.value("port", port);
+    apiKey = config.value("apiKey", apiKey);
+    mountPoint = config.value("mountPoint", mountPoint);
+    cacheDir = config.value("cacheDir", cacheDir);
+    logLevel = config.value("logLevel", logLevel);
+
+    if (config.contains("enabledFileTypes") && config["enabledFileTypes"].is_array())
+    {
+        enabledFileTypes.clear();
+        for (const auto &type : config["enabledFileTypes"])
+        {
+            enabledFileTypes.insert(type.get<std::string>());
+        }
+    }
+
+    isShort = config.value("isShort", isShort);
+}
 
 // Signal handler to gracefully exit
 void handleSignal(int signal)
@@ -79,83 +113,108 @@ int main(int argc, char *argv[])
     // Register signal handler
     std::signal(SIGINT, handleSignal);
 
-    // Initialize application parameters
+    // Initialize application parameters with defaults
     LogLevel logLevel = LogLevel::INFO; // Default log level
     bool debugMode = false;
     std::string host = "localhost";
     std::string port = "7095";
-    std::string apiKey = "APIKEY from settings.json";
+    std::string apiKey;
     std::string mountPoint = "/mnt/smfs";
     std::string cacheDir = "/tmp/smfs_storage";
-    std::string streamGroupProfileIds = "5";
+    std::string streamGroupProfileIds;
     bool isShort = true;
     std::set<std::string> enabledFileTypes{"xml", "m3u", "ts"};
 
-    // Parse arguments
-    for (int i = 1; i < argc; i++)
+    // Check for --config option and load configuration file
+    std::string configFilePath = "/etc/smfs/smconfig.json"; // Default config file path
+    for (int i = 1; i < argc; ++i)
+    {
+        std::string arg = argv[i];
+        if (arg == "--config" && i + 1 < argc)
+        {
+            configFilePath = argv[++i];
+        }
+    }
+
+    try
+    {
+        loadConfig(configFilePath, host, port, apiKey, mountPoint, cacheDir, enabledFileTypes, isShort, logLevel);
+        Logger::Log(LogLevel::INFO, "Configuration loaded from: " + configFilePath);
+    }
+    catch (const std::exception &e)
+    {
+        Logger::Log(LogLevel::WARN, "Failed to load config file: " + std::string(e.what()));
+    }
+
+    // Parse command line arguments to override defaults and config file
+    for (int i = 1; i < argc; ++i)
     {
         std::string arg = argv[i];
         if (arg == "--help")
         {
             std::cout << "Usage: ./smfs [options]\n"
+                      << "--config <path>                 Path to the configuration file\n"
                       << "--debug                         Enable debug mode (equivalent to --log-level DEBUG)\n"
                       << "--log-level <level>             Set log level (TRACE, DEBUG, INFO, WARN, ERROR, FATAL)\n"
-                      << "--enable-<filetype>=true/false  Enable or disable specific file types (e.g., ts, strm, m3u, xml)\n"
+                      << "--host <host>                   Set the API host\n"
+                      << "--port <port>                   Set the API port\n"
+                      << "--apikey <key>                  Set the API key\n"
                       << "--mount <mountpoint>            Set the FUSE mount point\n"
                       << "--isShort=true/false            Set the short URL\n"
-                      << "--cacheDir <path>               Specify the cache directory\n";
+                      << "--cacheDir <path>               Specify the cache directory\n"
+                      << "--enable-<filetype>=true/false  Enable or disable specific file types (e.g., ts, strm, m3u, xml)\n";
             exit(0);
         }
         else if (arg == "--debug")
         {
             debugMode = true;
+            logLevel = LogLevel::DEBUG;
         }
         else if (arg == "--log-level" && i + 1 < argc)
         {
-            std::string level = argv[++i];
-            std::transform(level.begin(), level.end(), level.begin(), ::tolower);
-            if (level == "trace")
-                logLevel = LogLevel::TRACE;
-            else if (level == "debug")
-                logLevel = LogLevel::DEBUG;
-            else if (level == "info")
-                logLevel = LogLevel::INFO;
-            else if (level == "warn")
-                logLevel = LogLevel::WARN;
-            else if (level == "error")
-                logLevel = LogLevel::ERROR;
-            else if (level == "fatal")
-                logLevel = LogLevel::FATAL;
-            else
-            {
-                std::cerr << "Invalid log level: " << level << std::endl;
-                return 1;
-            }
+            logLevel = Logger::ParseLogLevel(argv[++i]);
         }
-        else if (arg == "--host")
+        else if (arg == "--host" && i + 1 < argc)
+        {
             host = argv[++i];
-        else if (arg == "--port")
+        }
+        else if (arg == "--port" && i + 1 < argc)
+        {
             port = argv[++i];
-        else if (arg == "--apikey")
+        }
+        else if (arg == "--apikey" && i + 1 < argc)
+        {
             apiKey = argv[++i];
-        else if (arg == "--mount")
+        }
+        else if (arg == "--mount" && i + 1 < argc)
+        {
             mountPoint = argv[++i];
-        else if (arg == "--streamGroupProfileIds")
+        }
+        else if (arg == "--streamGroupProfileIds" && i + 1 < argc)
+        {
             streamGroupProfileIds = argv[++i];
-        else if (arg == "--isShort")
+        }
+        else if (arg == "--isShort" && i + 1 < argc)
+        {
             isShort = (std::string(argv[++i]) == "true");
-        else if (arg == "--cacheDir")
+        }
+        else if (arg == "--cacheDir" && i + 1 < argc)
+        {
             cacheDir = argv[++i];
+        }
         else
         {
             parseEnableFlag(arg, enabledFileTypes);
         }
     }
 
-    if (debugMode)
+    // Validate required parameters
+    if (host.empty() || apiKey.empty())
     {
-        logLevel = LogLevel::DEBUG;
+        std::cerr << "Error: --host and --apikey must be provided either in the config file or as command line arguments." << std::endl;
+        return 1;
     }
+
     // Initialize Logger
     Logger::InitLogFile("/var/log/smfs/smfs.log");
     Logger::SetLogLevel(logLevel);

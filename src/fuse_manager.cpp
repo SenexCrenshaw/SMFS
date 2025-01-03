@@ -15,7 +15,8 @@ FuseManager::~FuseManager()
 
 bool FuseManager::Initialize(bool debugMode)
 {
-    std::vector<std::string> argsList = {"fuse_app", "-o", "allow_other"};
+    // std::vector<std::string> argsList = {"fuse_app", "-o", "allow_other"};
+    std::vector<std::string> argsList = {"fuse_app"};
     if (debugMode)
     {
         argsList.push_back("-d");

@@ -45,6 +45,33 @@ std::string GetCurrentTimestamp()
     return oss.str();
 }
 
+#include <string>
+#include <algorithm>
+#include <stdexcept>
+#include "logger.hpp" // Assuming LogLevel is defined here
+
+LogLevel Logger::ParseLogLevel(const std::string &levelStr)
+{
+    std::string level = levelStr;
+    std::transform(level.begin(), level.end(), level.begin(), ::tolower);
+
+    if (level == "trace")
+        return LogLevel::TRACE;
+    if (level == "debug")
+        return LogLevel::DEBUG;
+    if (level == "info")
+        return LogLevel::INFO;
+    if (level == "warn")
+        return LogLevel::WARN;
+    if (level == "error")
+        return LogLevel::ERROR;
+    if (level == "fatal")
+        return LogLevel::FATAL;
+
+    throw std::invalid_argument("Invalid log level: " + levelStr);
+}
+
+
 void Logger::InitLogFile(const std::string &filePath)
 {
     std::lock_guard<std::mutex> lock(g_logMutex);

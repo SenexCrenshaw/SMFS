@@ -19,6 +19,7 @@ class Logger
 public:
     static void InitLogFile(const std::string &filePath);
     static void Log(LogLevel level, const std::string &msg);
+    static LogLevel ParseLogLevel(const std::string &levelStr);
 
     // Set log level
     static void SetLogLevel(LogLevel level)

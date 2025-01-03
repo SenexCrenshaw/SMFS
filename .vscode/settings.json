@@ -92,6 +92,7 @@
         "stack": "cpp",
         "__config": "cpp",
         "t": "cpp",
-        "strstream": "cpp"
+        "strstream": "cpp",
+        "coroutine": "cpp"
     }
 }

@@ -1,0 +1,11 @@
+{
+    "host": "localhost",
+    "port": "7095",
+    "apiKey": "your-api-key",
+    "mountPoint": "/mnt/smfs",
+    "cacheDir": "/var/lib/smfs/cache",
+    "enabledFileTypes": ["xml", "m3u", "ts"],
+    "streamGroupProfileIds": "",
+    "isShort": true,
+    "logLevel": "INFO"
+}

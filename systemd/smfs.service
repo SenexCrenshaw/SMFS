@@ -1,11 +1,15 @@
 [Unit]
-Description=SMFS Virtual Filesystem Service
+Description=Stream Master File System (SMFS)
 After=network.target
 
 [Service]
-Type=simple
-ExecStart=/usr/bin/smfs --host localhost --port 7095 --apikey YOUR_API_KEY --mount /mnt/smfs
+ExecStart=/usr/local/bin/smfs --config /etc/smfs/smconfig.json
 Restart=always
+User=smfs
+Group=smfs
+WorkingDirectory=/var/lib/smfs
+Environment=LOG_LEVEL=info
+EnvironmentFile=-/etc/smfs/env
 
 [Install]
 WantedBy=multi-user.target
