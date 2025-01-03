@@ -1,152 +1,180 @@
-// File: websocket_client.cpp
 #include "websocket_client.hpp"
-#include "logger.hpp"
-#include "smfs_state.hpp" // For global state and exitRequested
-
-#include <chrono>
-#include <thread>
-#include <stdexcept>
 #include <iostream>
-#include <atomic>
+#include <thread>
+#include <smfs_state.hpp>
 
-WebSocketClient::WebSocketClient(const std::string &host, const std::string &port, const std::string &apiKey)
-    : host_(host), port_(port), apiKey_(apiKey)
-{
-}
+WebSocketClient::WebSocketClient(std::string host, std::string port)
+    : host_(std::move(host)), port_(std::move(port)),
+      resolver_(ioc_), retryTimer_(ioc_) {}
 
 WebSocketClient::~WebSocketClient()
 {
+    Logger::Log(LogLevel::INFO, "WebSocketClient destroyed.");
     Stop();
-    if (wsThread.joinable())
-    {
-        wsThread.join();
-    }
 }
 
 void WebSocketClient::Start()
 {
     Logger::Log(LogLevel::DEBUG, "WebSocketClient::Start() called.");
-
-    wsThread = std::thread([this]()
-                           {
-                               Logger::Log(LogLevel::DEBUG, "WebSocketClient thread started.");
-                               ConnectAndListen(); });
+    Connect();
+    ioc_.run(); // Run the IO context loop
 }
 
 void WebSocketClient::Stop()
 {
     Logger::Log(LogLevel::DEBUG, "WebSocketClient::Stop() called.");
-    if (!shouldRun.exchange(false))
+    shouldRun_ = false;
+    if (isConnected_)
     {
-        Logger::Log(LogLevel::WARN, "WebSocket client is already stopped.");
+        Shutdown();
+        isConnected_ = false;
+    }
+    ioc_.stop();
+}
+
+void WebSocketClient::SetMessageHandler(std::function<void(const std::string &)> handler)
+{
+    messageHandler_ = std::move(handler);
+}
+
+void WebSocketClient::Connect()
+{
+    if (!shouldRun_)
+        return;
+
+    Logger::Log(LogLevel::INFO, "Resolving host...");
+    resolver_.async_resolve(host_, port_,
+                            [this](beast::error_code ec, tcp::resolver::results_type results)
+                            {
+                                if (ec)
+                                {
+                                    Logger::Log(LogLevel::ERROR, "Resolve error: " + ec.message());
+                                    RetryConnection();
+                                    g_state->apiClient.fetchFileList();
+                                    return;
+                                }
+
+                                ws_ = std::make_shared<websocket::stream<beast::tcp_stream>>(ioc_);
+                                Logger::Log(LogLevel::INFO, "Connecting to host...");
+
+                                net::async_connect(
+                                    ws_->next_layer().socket(), // Access the actual socket
+                                    results,                    // Pass the resolver results directly
+                                    [this](beast::error_code ec, const tcp::endpoint &endpoint)
+                                    {
+                                        if (ec)
+                                        {
+                                            Logger::Log(LogLevel::ERROR, "Connect error: " + ec.message());
+                                            RetryConnection();
+                                            return;
+                                        }
+
+                                        Logger::Log(LogLevel::INFO, "Connected to host. Endpoint: " + endpoint.address().to_string());
+
+                                        // Perform WebSocket handshake
+                                        ws_->async_handshake(host_, "/ws",
+                                                             [this](beast::error_code ec)
+                                                             {
+                                                                 if (ec)
+                                                                 {
+                                                                     Logger::Log(LogLevel::ERROR, "Handshake error: " + ec.message());
+                                                                     RetryConnection();
+                                                                     return;
+                                                                 }
+
+                                                                 isConnected_ = true;
+                                                                 g_state->apiClient.fetchFileList();
+                                                                 Logger::Log(LogLevel::INFO, "WebSocket connected successfully.");
+                                                                 Read();
+                                                             });
+                                    });
+                            });
+}
+
+void WebSocketClient::Read()
+{
+    if (!shouldRun_ || !ws_)
+        return;
+
+    ws_->async_read(buffer_,
+                    [this](beast::error_code ec, std::size_t bytesTransferred)
+                    {
+                        if (ec)
+                        {
+                            if (ec == websocket::error::closed)
+                            {
+                                Logger::Log(LogLevel::WARN, "WebSocket closed by server.");
+                            }
+                            else
+                            {
+                                Logger::Log(LogLevel::ERROR, "Read error: " + ec.message());
+                            }
+                            isConnected_ = false;
+                            RetryConnection();
+                            return;
+                        }
+
+                        std::string message = beast::buffers_to_string(buffer_.data());
+                        buffer_.consume(bytesTransferred);
+
+                        Logger::Log(LogLevel::DEBUG, "Received message: " + message);
+                        if (messageHandler_)
+                        {
+                            messageHandler_(message);
+                        }
+
+                        Read(); // Continue reading
+                    });
+}
+
+void WebSocketClient::Shutdown()
+{
+    static std::atomic<bool> shutdownCalled{false};
+
+    if (!ws_ || !isConnected_ || shutdownCalled.exchange(true))
+    {
+        Logger::Log(LogLevel::DEBUG, "Shutdown already in progress or not needed.");
         return;
     }
 
-    auto start = std::chrono::steady_clock::now();
-
-    // Wait for the thread to exit
-    while (wsThread.joinable())
-    {
-        if (std::chrono::steady_clock::now() - start > std::chrono::seconds(5))
-        {
-            Logger::Log(LogLevel::WARN, "WebSocket thread did not exit in time. Forcing shutdown...");
-            pthread_cancel(wsThread.native_handle());
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
-
-    if (wsThread.joinable())
-    {
-        try
-        {
-            wsThread.join();
-        }
-        catch (const std::system_error &e)
-        {
-            Logger::Log(LogLevel::ERROR, "Error joining WebSocket thread: " + std::string(e.what()));
-        }
-    }
-
-    Logger::Log(LogLevel::INFO, "WebSocket client stopped.");
+    Logger::Log(LogLevel::INFO, "Shutting down WebSocket...");
+    ws_->async_close(websocket::close_code::normal,
+                     [this](beast::error_code ec)
+                     {
+                         if (ec && ec != websocket::error::closed)
+                         {
+                             Logger::Log(LogLevel::ERROR, "Close error: " + ec.message());
+                         }
+                         else
+                         {
+                             Logger::Log(LogLevel::INFO, "WebSocket closed gracefully.");
+                         }
+                         isConnected_ = false;   // Ensure the flag is updated
+                         shutdownCalled = false; // Reset for future use
+                     });
 }
 
-void WebSocketClient::ConnectAndListen()
+void WebSocketClient::RetryConnection()
 {
-    int retryDelay = 1; // Start with a 1-second delay
+    if (!shouldRun_)
+        return;
 
-    while (shouldRun)
-    {
-        try
-        {
-            net::io_context ioc;
-            tcp::resolver resolver{ioc};
-            auto const results = resolver.resolve(host_, port_);
-            websocket::stream<beast::tcp_stream> ws{ioc};
+    static int retryDelay = 1;
+    Logger::Log(LogLevel::INFO, "Retrying connection in " + std::to_string(retryDelay) + " seconds...");
 
-            // Attempt to connect
-            Logger::Log(LogLevel::INFO, "Attempting WebSocket connection...");
-            ws.next_layer().connect(*results.begin());
-            ws.handshake(host_, "/ws");
-            Logger::Log(LogLevel::INFO, "WebSocket connection established.");
+    retryTimer_.expires_after(std::chrono::seconds(retryDelay));
+    retryTimer_.async_wait([this](beast::error_code ec)
+                           {
+        if (!ec) {
+            Connect();
+        } });
 
-            // Fetch the file list after reconnecting
-            if (g_state != nullptr)
-            {
-                Logger::Log(LogLevel::INFO, "Fetching file list after reconnecting...");
-                g_state->apiClient.fetchFileList();
-                Logger::Log(LogLevel::INFO, "File list fetched successfully after reconnecting.");
-            }
-
-            beast::flat_buffer buffer;
-            while (shouldRun)
-            {
-                try
-                {
-                    // Read messages
-                    ws.read(buffer);
-                    HandleMessage(beast::buffers_to_string(buffer.data()));
-                    buffer.consume(buffer.size());
-                    retryDelay = 1; // Reset delay on successful read
-                }
-                catch (const beast::system_error &e)
-                {
-                    if (e.code() == websocket::error::closed)
-                    {
-                        Logger::Log(LogLevel::WARN, "WebSocket closed by server.");
-                        break;
-                    }
-                    throw; // Rethrow other exceptions
-                }
-            }
-
-            // Cleanly close the WebSocket
-            if (shouldRun)
-            {
-                Logger::Log(LogLevel::INFO, "Closing WebSocket connection...");
-                ws.close(websocket::close_code::normal);
-            }
-        }
-        catch (const std::exception &e)
-        {
-            Logger::Log(LogLevel::ERROR, "WebSocket connection failed: " + std::string(e.what()));
-        }
-
-        if (!shouldRun)
-            break;
-
-        // Reconnect with exponential backoff
-        Logger::Log(LogLevel::INFO, "Retrying connection in " + std::to_string(retryDelay) + " seconds.");
-        std::this_thread::sleep_for(std::chrono::seconds(retryDelay));
-        retryDelay = std::min(retryDelay * 2, 32); // Exponential backoff up to 32 seconds
-    }
-
-    Logger::Log(LogLevel::INFO, "WebSocketClient::ConnectAndListen exiting.");
+    retryDelay = std::min(retryDelay * 2, 32); // Exponential backoff
 }
 
-void WebSocketClient::HandleMessage(const std::string &message)
+void WebSocketClient::HandleMessage(std::string message)
 {
-    Logger::Log(LogLevel::DEBUG, "Received message: " + message);
+    Logger::Log(LogLevel::DEBUG, "Processing message: " + message);
 
     if (message == "reload")
     {
@@ -166,5 +194,4 @@ void WebSocketClient::HandleMessage(const std::string &message)
         Logger::Log(LogLevel::INFO, "Shutdown command received. Initiating shutdown...");
         exitRequested = true; // Set the global exit flag
     }
-    // Add additional command handling here
 }

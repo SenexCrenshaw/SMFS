@@ -188,7 +188,7 @@ int main(int argc, char *argv[])
     // g_state->apiClient.fetchFileList();
 
     // Start WebSocket client
-    WebSocketClient wsClient(host, port, apiKey);
+    WebSocketClient wsClient(host, port);
     std::thread wsThread([&wsClient]()
                          {
                              Logger::Log(LogLevel::INFO, "Starting WebSocket client thread...");
@@ -204,15 +204,15 @@ int main(int argc, char *argv[])
     }
     stopAllStreams();
 
-    Logger::Log(LogLevel::INFO, "Stopping WebSocket client...");
     wsClient.Stop();
     if (wsThread.joinable())
     {
+        Logger::Log(LogLevel::INFO, "Waiting for WebSocket client thread to finish...");
         wsThread.join();
+        Logger::Log(LogLevel::INFO, "WebSocket client thread joined.");
     }
 
     // Stop FUSE
-    // Logger::Log(LogLevel::INFO, "Stopping FUSE session...");
     fuseManager->Stop();
 
     Logger::Log(LogLevel::INFO, "SMFS exited cleanly.");
