@@ -34,14 +34,16 @@ jobs:
             cmake \
             rpm \
             libboost-all-dev \
-            nlohmann-json3-dev
-
+            nlohmann-json3-dev \
+            ca-certificates
+            
       - name: Install `github-changelog-generator`
         run: |
-          gem install faraday -v "~> 1.10"  # Compatible Faraday version
-          gem install github_changelog_generator -v 1.16.4
+          gem install github_changelog_generator
       
       - name: Generate Changelog
+        env:
+          SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt 
         run: |
           github_changelog_generator \
             --user ${{ github.repository_owner }} \
