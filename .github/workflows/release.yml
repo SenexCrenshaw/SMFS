@@ -23,6 +23,8 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v3
+        with:
+          fetch-depth: 0 
 
       - name: Install Build Tools and Dependencies
         run: |
@@ -38,7 +40,7 @@ jobs:
   
       - name: "Build Changelog"
         id: build_changelog
-        uses: mikepenz/release-changelog-builder-action@v5
+        uses: mikepenz/release-changelog-builder-action@v5        
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
          
