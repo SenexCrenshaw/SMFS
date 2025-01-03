@@ -1,3 +1,4 @@
+// File: stream_manager.hpp
 #pragma once
 #include "pipe.hpp"
 #include "i_streaming_client.hpp"

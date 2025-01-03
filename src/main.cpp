@@ -102,7 +102,7 @@ int main(int argc, char *argv[])
                       << "--log-level <level>             Set log level (TRACE, DEBUG, INFO, WARN, ERROR, FATAL)\n"
                       << "--enable-<filetype>=true/false  Enable or disable specific file types (e.g., ts, strm, m3u, xml)\n"
                       << "--mount <mountpoint>            Set the FUSE mount point\n"
-                      << "--mount <mountpoint>            Set the FUSE mount point\n"
+                      << "--isShort=true/false            Set the short URL\n"
                       << "--cacheDir <path>               Specify the cache directory\n";
             exit(0);
         }
@@ -185,7 +185,7 @@ int main(int argc, char *argv[])
     }
 
     // Fetch initial file list
-    g_state->apiClient.fetchFileList();
+    // g_state->apiClient.fetchFileList();
 
     // Start WebSocket client
     WebSocketClient wsClient(host, port, apiKey);
@@ -210,6 +210,10 @@ int main(int argc, char *argv[])
     {
         wsThread.join();
     }
+
+    // Stop FUSE
+    // Logger::Log(LogLevel::INFO, "Stopping FUSE session...");
+    fuseManager->Stop();
 
     Logger::Log(LogLevel::INFO, "SMFS exited cleanly.");
     return 0;

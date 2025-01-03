@@ -70,24 +70,27 @@ void FuseManager::Run()
 
 void FuseManager::Stop()
 {
-    if (session_)
     {
-        Logger::Log(LogLevel::INFO, "Stopping FUSE session...");
-        fuse_session_exit(session_);
-
-        if (fuseThread_.joinable())
+        std::lock_guard<std::mutex> lock(exitMutex_);
+        if (!session_)
         {
-            Logger::Log(LogLevel::WARN, "FUSE thread did not exit, forcefully killing...");
-            pthread_cancel(fuseThread_.native_handle()); // Force kill thread
-            fuseThread_.join();
+            // Logger::Log(LogLevel::WARN, "FUSE session already stopped.");
+            return;
         }
 
+        Logger::Log(LogLevel::INFO, "Stopping FUSE session...");
+        fuse_session_exit(session_);
         fuse_session_unmount(session_);
-        fuse_session_destroy(session_);
         session_ = nullptr;
-
-        Logger::Log(LogLevel::INFO, "FUSE session stopped.");
     }
+
+    if (fuseThread_.joinable())
+    {
+        Logger::Log(LogLevel::INFO, "Waiting for FUSE thread to exit...");
+        fuseThread_.join();
+    }
+
+    Logger::Log(LogLevel::INFO, "FUSE session stopped successfully.");
 }
 
 void FuseManager::FuseLoop()
@@ -106,6 +109,7 @@ void FuseManager::FuseLoop()
     }
 
     {
+
         std::lock_guard<std::mutex> lock(exitMutex_);
         exitRequested_ = true;
     }

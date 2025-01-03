@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 project(smfs_fuse LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_FLAGS "-Wall -Wextra -Wpedantic")
 
 find_package(PkgConfig REQUIRED)
@@ -11,11 +11,15 @@ pkg_check_modules(CURL REQUIRED libcurl)
 set(SOURCE_FILES
     src/main.cpp
     src/logger.cpp
-    src/api_client.cpp
-    src/fuse_operations.cpp
+    src/api_client.cpp    
     src/fuse_manager.cpp
     src/async_curl_client.cpp
     src/stream_manager.cpp
+    src/websocket_client.cpp
+    src/directory_operations.cpp
+    src/file_operations.cpp
+    src/lookup_operations.cpp
+    src/util_operations.cpp
     include/i_streaming_client.hpp
     include/async_curl_client.hpp
     include/logger.hpp

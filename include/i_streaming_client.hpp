@@ -1,3 +1,4 @@
+// File: i_streaming_client.hpp
 #pragma once
 #include <string>
 #include <functional>

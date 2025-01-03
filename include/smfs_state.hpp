@@ -13,6 +13,8 @@
 #include <set>
 #include "stream_manager.hpp"
 
+extern std::atomic<bool> exitRequested;
+
 // Forward declare so we can reference below
 struct StreamContext;
 
