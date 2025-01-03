@@ -110,6 +110,7 @@ void stopAllStreams()
 
 int main(int argc, char *argv[])
 {
+
     // Register signal handler
     std::signal(SIGINT, handleSignal);
     std::signal(SIGTERM, handleSignal);
