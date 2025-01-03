@@ -25,7 +25,16 @@ jobs:
         uses: actions/checkout@v3
         with:
           fetch-depth: 0 
-
+          ref: ${{ github.event.inputs.branch || 'main' }} # Default to 'main' if not specified
+      
+      - name: Create Tag
+        if: ${{ github.event.inputs.version != '' }}
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git tag -a v${{ github.event.inputs.version }} -m "Release version ${{ github.event.inputs.version }}"
+          git push origin v${{ github.event.inputs.version }}
+          
       - name: Install Build Tools and Dependencies
         run: |
           sudo apt-get update

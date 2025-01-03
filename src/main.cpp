@@ -82,9 +82,9 @@ int main(int argc, char *argv[])
     // Initialize application parameters
     LogLevel logLevel = LogLevel::INFO; // Default log level
     bool debugMode = false;
-    std::string host = "10.3.10.50";
+    std::string host = "localhost";
     std::string port = "7095";
-    std::string apiKey = "f4bed758a1aa45a38c801ed6893d70fb";
+    std::string apiKey = "APIKEY from settings.json";
     std::string mountPoint = "/mnt/smfs";
     std::string cacheDir = "/tmp/smfs_storage";
     std::string streamGroupProfileIds = "5";
@@ -183,9 +183,6 @@ int main(int argc, char *argv[])
     {
         Logger::Log(LogLevel::INFO, "Enabled file type: " + fileType);
     }
-
-    // Fetch initial file list
-    // g_state->apiClient.fetchFileList();
 
     // Start WebSocket client
     WebSocketClient wsClient(host, port);
